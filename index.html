@@ -429,6 +429,39 @@
     main.body { grid-template-columns: 1fr; }
     .side { border-left: none; border-top: 1px solid var(--border); }
   }
+
+  /* ---------- Guest mode (single-event view) ---------- */
+  body.guest-mode main.body {
+    grid-template-columns: 1fr;
+    max-width: 640px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  body.guest-mode .calendar-wrap { display: none; }
+  body.guest-mode .side {
+    border-left: none;
+    background: transparent;
+    padding: 28px 20px;
+  }
+  body.guest-mode .side > h2:first-of-type { display: none; }
+  body.guest-mode .side > h2.this-month,
+  body.guest-mode .side > h2.this-month + .side-card { display: none; }
+  body.guest-mode #newEventBtn,
+  body.guest-mode #inviteBtn,
+  body.guest-mode #houseCode,
+  body.guest-mode #houseLabel { display: none !important; }
+  body.guest-mode .guest-pill { display: inline-flex !important; }
+  body.guest-mode .side-card { padding: 22px; }
+  .guest-pill {
+    display: none;
+    align-items: center;
+    background: var(--p-peach-bg);
+    color: var(--p-peach-fg);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 12px;
+  }
 </style>
 </head>
 <body>
@@ -439,6 +472,7 @@
     <div class="meta">
       <span id="houseLabel" class="muted">Not connected</span>
       <span id="houseCode" class="house-code" style="display:none"></span>
+      <span class="guest-pill">👋 Guest view</span>
       <button id="inviteBtn" class="ghost" title="Copy invite link" style="display:none">Invite</button>
       <button id="newEventBtn" class="primary">+ New event</button>
     </div>
@@ -453,7 +487,7 @@
         <div class="empty">Tap an event for details, or drag any event to a new day to reschedule.</div>
       </div>
 
-      <h2 style="margin-top: 24px">🌻 This month</h2>
+      <h2 class="this-month" style="margin-top: 24px">🌻 This month</h2>
       <div class="side-card"><div id="summary" class="muted" style="font-size:13px">—</div></div>
     </aside>
   </main>
@@ -621,6 +655,14 @@
   let houseCode = (params.get("house") || localStorage.getItem("sp.houseCode") || "").trim();
   let displayName = localStorage.getItem("sp.name") || "";
   let pendingFocusEventId = params.get("event") || null;
+  const isGuestMode = (params.get("guest") === "1") && !!pendingFocusEventId && !!houseCode;
+  if (isGuestMode) {
+    document.body.classList.add("guest-mode");
+    // Tweak the setup modal copy for guests
+    document.querySelector("#setupModal h1").textContent = "You've been invited!";
+    document.querySelector("#setupModal p").textContent  = "Pop in your name so people know who's RSVPing.";
+    document.querySelector("#setupModal .field:nth-of-type(2)").style.display = "none"; // hide house code field
+  }
 
   function showSetup() {
     $("#setupName").value = displayName;
@@ -631,11 +673,15 @@
 
   $("#setupGo").addEventListener("click", () => {
     const name = $("#setupName").value.trim();
-    const code = $("#setupCode").value.trim().toLowerCase().replace(/\s+/g, "-");
-    if (!name || !code) { toast("Both fields are required"); return; }
+    // Guest mode uses the house code from the URL — don't make the user retype it
+    const code = isGuestMode
+      ? houseCode
+      : $("#setupCode").value.trim().toLowerCase().replace(/\s+/g, "-");
+    if (!name) { toast("Please enter your name"); return; }
+    if (!code) { toast("House code is required"); return; }
     displayName = name; houseCode = code;
     localStorage.setItem("sp.name", name);
-    localStorage.setItem("sp.houseCode", code);
+    if (!isGuestMode) localStorage.setItem("sp.houseCode", code);
     hideSetup();
     boot();
   });
@@ -929,9 +975,12 @@
         </div>
 
         <div class="actions" style="flex-wrap:wrap">
-          <button data-act="share" data-id="${id}">🔗 Copy event link</button>
-          <button data-act="edit"  data-id="${id}">Edit</button>
-          <button class="danger" data-act="del" data-id="${id}">Delete</button>
+          ${isGuestMode ? "" : `
+            <button data-act="share"       data-id="${id}">🔗 Copy event link</button>
+            <button data-act="share-guest" data-id="${id}">👋 Copy guest invite</button>
+            <button data-act="edit"        data-id="${id}">Edit</button>
+            <button class="danger" data-act="del" data-id="${id}">Delete</button>
+          `}
         </div>
       </div>
     `;
@@ -1023,6 +1072,12 @@
       const url = `${location.origin}${location.pathname}?house=${encodeURIComponent(houseCode)}&event=${encodeURIComponent(id)}`;
       try { await navigator.clipboard.writeText(url); toast("Event link copied"); }
       catch { prompt("Copy this event link:", url); }
+    }
+
+    if (act === "share-guest") {
+      const url = `${location.origin}${location.pathname}?house=${encodeURIComponent(houseCode)}&event=${encodeURIComponent(id)}&guest=1`;
+      try { await navigator.clipboard.writeText(url); toast("Guest invite copied — they'll only see this event"); }
+      catch { prompt("Copy this guest invite:", url); }
     }
 
     if (act === "chat-send") {
@@ -1165,8 +1220,33 @@
     onAuthStateChanged(auth, (u) => {
       if (!u) return;
       user = u;
-      if (!calendar) renderCalendar();
-      subscribeEvents();
+      if (isGuestMode) {
+        subscribeSingleEvent(pendingFocusEventId);
+      } else {
+        if (!calendar) renderCalendar();
+        subscribeEvents();
+      }
+    });
+  }
+
+  function subscribeSingleEvent(eventId) {
+    if (unsub) unsub();
+    const ref = doc(db, "houses", houseCode, "events", eventId);
+    unsub = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) {
+        $("#sideContent").innerHTML = `<div class="empty" style="text-align:center;padding:40px 10px">
+          <div style="font-size:32px;margin-bottom:8px">😕</div>
+          <div><strong>Event not found</strong></div>
+          <div class="muted" style="margin-top:4px">The link may be wrong, or the host deleted this event.</div>
+        </div>`;
+        return;
+      }
+      eventsCache.clear();
+      eventsCache.set(snap.id, snap.data());
+      showInSide(snap.id);
+    }, (err) => {
+      console.error(err);
+      toast("Couldn't load event");
     });
   }
 

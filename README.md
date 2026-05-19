@@ -84,6 +84,12 @@ Anyone who opens it will pre-fill the house code and just needs to type their na
 - **Categories** — colour-coded: Social, Day trip, Food, Night out, Chill, Other.
 - **Costs** — set a per-person cost on each event; the side panel shows a running total for the month.
 
+## Inviting non-flatmates (guest mode)
+
+Each event has two share buttons: **🔗 Copy event link** (for flatmates — opens the app focused on that event) and **👋 Copy guest invite** (for outsiders — opens a single-event view with no access to the rest of the calendar). Guests can RSVP, bring +1s, and chat on that event only; they can't see other events or use the calendar.
+
+⚠️ **Security caveat:** guest mode is a UI restriction, not a hard security boundary. The Firestore rules above still let any signed-in user read any event in the house if they query directly. For close friends this is fine. If you ever want to share with strangers, you'd need stricter rules (e.g., per-event allow-lists).
+
 ## Privacy note
 
 Anyone who knows your house code can read and write to your events (assuming the Firestore rules above). Don't share the code publicly. If you want to revoke access, just change the code — your flatmates re-join with the new one and the old one becomes an orphan collection in Firestore (you can delete it from the console if you like).
