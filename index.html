@@ -239,6 +239,49 @@
     margin-top: 8px;
   }
 
+  /* ---------- House dinner ---------- */
+  .menu-card {
+    background: #fff7d6;
+    border: 1px solid #facc15;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  .menu-card .menu-title {
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: #854d0e;
+  }
+  .headcount {
+    background: var(--p-mint-bg);
+    color: var(--p-mint-fg);
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .guest-stepper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: var(--bg-tint);
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .guest-stepper .steps { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .step-btn {
+    width: 28px; height: 28px;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    font-weight: 700 !important;
+    line-height: 1;
+  }
+  .step-count { min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+
   /* ---------- Chat ---------- */
   .chat-list {
     background: var(--bg-tint);
@@ -494,9 +537,19 @@
       <label>Who's coming (comma-separated)</label>
       <input id="evInvitees" placeholder="Lara, Sam, Priya..." />
     </div>
+    <div class="field" style="margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:14px;color:var(--text)">
+        <input type="checkbox" id="evIsDinner" style="width:auto;margin:0" />
+        🍝 This is a house dinner (track menu + headcount)
+      </label>
+    </div>
+    <div class="field" id="evMenuField" style="display:none">
+      <label>Menu</label>
+      <textarea id="evMenu" placeholder="What's being cooked? Any sides, drinks, dietary notes…"></textarea>
+    </div>
     <div class="field">
       <label>Notes</label>
-      <textarea id="evNotes" placeholder="Anything to remember"></textarea>
+      <textarea id="evNotes" placeholder="Anything else to remember"></textarea>
     </div>
     <div class="actions">
       <button id="evCancel" class="ghost">Cancel</button>
@@ -784,7 +837,9 @@
     const cat = CATEGORIES[data.category] || CATEGORIES.other;
     const invitees = (data.invitees || []).filter(Boolean);
     const rsvps = data.rsvps || {};
+    const plusOnes = data.plusOnes || {};
     const myRsvp = rsvps[displayName] || null;
+    const myGuests = Number(plusOnes[displayName]) || 0;
 
     // Group responses
     const bucket = { yes: [], maybe: [], no: [] };
@@ -794,14 +849,41 @@
     const responded = new Set(Object.keys(rsvps));
     const noReply = invitees.filter(n => !responded.has(n));
 
+    // Dinner: total headcount
+    const isDinner = !!data.isDinner;
+    const yesPeople = bucket.yes.length;
+    const totalGuests = bucket.yes.reduce((sum, name) => sum + (Number(plusOnes[name]) || 0), 0);
+    const totalHeads = yesPeople + totalGuests;
+    const dinnerLabelForName = (name) => {
+      const g = Number(plusOnes[name]) || 0;
+      return g > 0 ? `${name} (+${g})` : name;
+    };
+
+    const fmtName = (n) => escapeHtml(isDinner ? dinnerLabelForName(n) : n);
     const respondedHtml = `
       <div class="responses stack" style="margin-top:6px">
-        ${bucket.yes.length   ? `<div class="resp-row"><strong>✅ Going (${bucket.yes.length}):</strong> <span class="resp-names">${bucket.yes.map(escapeHtml).join(", ")}</span></div>` : ""}
+        ${bucket.yes.length   ? `<div class="resp-row"><strong>✅ Going (${bucket.yes.length}):</strong> <span class="resp-names">${bucket.yes.map(fmtName).join(", ")}</span></div>` : ""}
         ${bucket.maybe.length ? `<div class="resp-row"><strong>🤔 Maybe (${bucket.maybe.length}):</strong> <span class="resp-names">${bucket.maybe.map(escapeHtml).join(", ")}</span></div>` : ""}
         ${bucket.no.length    ? `<div class="resp-row"><strong>❌ Can't (${bucket.no.length}):</strong> <span class="resp-names">${bucket.no.map(escapeHtml).join(", ")}</span></div>` : ""}
         ${noReply.length      ? `<div class="resp-row"><strong>🕓 No reply (${noReply.length}):</strong> <span class="resp-names">${noReply.map(escapeHtml).join(", ")}</span></div>` : ""}
         ${(!bucket.yes.length && !bucket.maybe.length && !bucket.no.length && !noReply.length) ? `<div class="resp-row muted">No responses yet — share the event link to ask everyone.</div>` : ""}
       </div>`;
+
+    const dinnerBlocks = isDinner ? `
+      ${data.menu ? `<div class="menu-card"><div class="menu-title">🍝 Menu</div>${escapeHtml(data.menu)}</div>` : ""}
+      ${totalHeads > 0 ? `<div class="headcount">👩‍🍳 Cooking for <strong>${totalHeads}</strong> · ${yesPeople} flatmate${yesPeople===1?"":"s"}${totalGuests>0?` + ${totalGuests} guest${totalGuests===1?"":"s"}`:""}</div>` : ""}
+    ` : "";
+
+    const guestStepperHtml = (isDinner && myRsvp === "yes") ? `
+      <div class="guest-stepper">
+        <span>Bringing guests?</span>
+        <div class="steps">
+          <button class="step-btn" data-act="guest-dec" data-id="${id}" ${myGuests <= 0 ? "disabled" : ""}>−</button>
+          <span class="step-count">${myGuests}</span>
+          <button class="step-btn" data-act="guest-inc" data-id="${id}">+</button>
+        </div>
+      </div>
+    ` : "";
 
     $("#sideContent").innerHTML = `
       <div class="stack">
@@ -812,12 +894,15 @@
         ${data.cost ? `<div>💷 <span class="cost">£${Number(data.cost).toFixed(2)}</span> per person</div>` : ""}
         ${data.notes ? `<div style="white-space:pre-wrap;padding:12px;background:var(--bg-tint);border-radius:10px;font-size:13px">${escapeHtml(data.notes)}</div>` : ""}
 
+        ${dinnerBlocks}
+
         <div class="ask-label">Are you coming, ${escapeHtml(displayName)}?</div>
         <div class="rsvp-group">
           <button class="rsvp-btn ${myRsvp==='yes'?'active':''}"   data-rsvp="yes"   data-act="rsvp" data-id="${id}">✅ Yes</button>
           <button class="rsvp-btn ${myRsvp==='maybe'?'active':''}" data-rsvp="maybe" data-act="rsvp" data-id="${id}">🤔 Maybe</button>
           <button class="rsvp-btn ${myRsvp==='no'?'active':''}"    data-rsvp="no"    data-act="rsvp" data-id="${id}">❌ Can't</button>
         </div>
+        ${guestStepperHtml}
 
         ${respondedHtml}
 
@@ -884,19 +969,41 @@
       const choice = b.dataset.rsvp;       // yes | maybe | no
       const cur = eventsCache.get(id);
       const rsvps = { ...(cur?.rsvps || {}) };
+      const plusOnes = { ...(cur?.plusOnes || {}) };
       // Toggle off if clicking the same one again
-      if (rsvps[displayName] === choice) delete rsvps[displayName];
-      else rsvps[displayName] = choice;
+      if (rsvps[displayName] === choice) {
+        delete rsvps[displayName];
+        delete plusOnes[displayName];      // guests only make sense for Yes
+      } else {
+        rsvps[displayName] = choice;
+        if (choice !== "yes") delete plusOnes[displayName];
+      }
       try {
         await updateDoc(doc(db, "houses", houseCode, "events", id), {
-          rsvps,
+          rsvps, plusOnes,
           updatedAt: serverTimestamp(),
           updatedBy: displayName,
         });
-        // The snapshot listener will re-render — but update immediately for snappy feel
-        eventsCache.set(id, { ...cur, rsvps });
+        eventsCache.set(id, { ...cur, rsvps, plusOnes });
         showInSide(id);
       } catch (err) { console.error(err); toast("Couldn't save RSVP"); }
+    }
+
+    if (act === "guest-inc" || act === "guest-dec") {
+      const cur = eventsCache.get(id);
+      const plusOnes = { ...(cur?.plusOnes || {}) };
+      const current = Number(plusOnes[displayName]) || 0;
+      const next = act === "guest-inc" ? current + 1 : Math.max(0, current - 1);
+      if (next === 0) delete plusOnes[displayName]; else plusOnes[displayName] = next;
+      try {
+        await updateDoc(doc(db, "houses", houseCode, "events", id), {
+          plusOnes,
+          updatedAt: serverTimestamp(),
+          updatedBy: displayName,
+        });
+        eventsCache.set(id, { ...cur, plusOnes });
+        showInSide(id);
+      } catch (err) { console.error(err); toast("Couldn't update guests"); }
     }
 
     if (act === "share") {
@@ -934,10 +1041,20 @@
     $("#evLocation").value  = data?.location || "";
     $("#evInvitees").value  = (data?.invitees || []).join(", ");
     $("#evNotes").value     = data?.notes || "";
+    $("#evIsDinner").checked = !!data?.isDinner;
+    $("#evMenu").value       = data?.menu || "";
+    $("#evMenuField").style.display = $("#evIsDinner").checked ? "" : "none";
 
     evModal.classList.add("open");
     setTimeout(() => $("#evTitle").focus(), 50);
   }
+
+  // Reveal/hide menu field as the dinner toggle changes
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.id === "evIsDinner") {
+      $("#evMenuField").style.display = e.target.checked ? "" : "none";
+    }
+  });
   function closeEventModal() { evModal.classList.remove("open"); editingId = null; }
 
   $("#evCancel").addEventListener("click", closeEventModal);
@@ -948,6 +1065,7 @@
     const startStr  = startTime ? `${date}T${startTime}` : date;
     const endStr    = (startTime && endTime) ? `${date}T${endTime}` : null;
 
+    const isDinner = $("#evIsDinner").checked;
     const payload = {
       title:    $("#evTitle").value.trim(),
       start:    startStr,
@@ -957,6 +1075,8 @@
       location: $("#evLocation").value.trim(),
       invitees: $("#evInvitees").value.split(",").map(s => s.trim()).filter(Boolean),
       notes:    $("#evNotes").value.trim(),
+      isDinner,
+      menu:     isDinner ? $("#evMenu").value.trim() : "",
       updatedAt: serverTimestamp(),
       updatedBy: displayName,
     };
