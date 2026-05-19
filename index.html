@@ -354,6 +354,19 @@
   .fc-daygrid-event-dot { display: none !important; }
   .fc-event-time { font-weight: 700 !important; opacity: .85; }
 
+  /* Unread-chat dot on calendar events */
+  .fc-event.has-unread { position: relative; }
+  .fc-event.has-unread::after {
+    content: '';
+    position: absolute;
+    top: -3px; right: -3px;
+    width: 10px; height: 10px;
+    background: #ef4444;
+    border-radius: 50%;
+    border: 2px solid var(--surface);
+    box-shadow: 0 1px 3px rgba(0,0,0,.15);
+  }
+
   /* small helpers */
   .muted { color: var(--muted); }
   .cost { font-variant-numeric: tabular-nums; }
@@ -631,6 +644,7 @@
     for (const [id, data] of eventsCache) {
       const cat = CATEGORIES[data.category] || CATEGORIES.other;
       const allDay = isAllDayStart(data.start);
+      const unread = hasUnread(id, data);
       const ev = {
         id,
         title: data.title || "Untitled",
@@ -639,6 +653,7 @@
         backgroundColor: cat.bg,
         borderColor: cat.bg,
         textColor: cat.fg,
+        classNames: unread ? ["has-unread"] : [],
       };
       if (data.end) ev.end = data.end;
       fcEvents.push(ev);
@@ -651,8 +666,8 @@
   function renderSummary() {
     const now = new Date();
     const month = now.getMonth(), year = now.getFullYear();
-    let count = 0, total = 0;
-    for (const data of eventsCache.values()) {
+    let count = 0, total = 0, unread = 0;
+    for (const [id, data] of eventsCache) {
       if (!data.start) continue;
       // Pull the date portion only so timed events bucket into the right month locally
       const datePart = data.start.includes("T") ? data.start.split("T")[0] : data.start;
@@ -661,10 +676,15 @@
         count++;
         total += Number(data.cost) || 0;
       }
+      if (hasUnread(id, data)) unread++;
     }
-    $("#summary").innerHTML = count === 0
+    const base = count === 0
       ? "No events yet this month."
       : `<strong>${count}</strong> event${count === 1 ? "" : "s"} planned · <span class="cost">£${total.toFixed(2)}</span> total per-person budget`;
+    const unreadLine = unread > 0
+      ? `<div style="margin-top:6px"><span style="color:#ef4444;font-weight:700">●</span> ${unread} event${unread === 1 ? "" : "s"} with new chat</div>`
+      : "";
+    $("#summary").innerHTML = base + unreadLine;
   }
 
   // ---------- Side panel ----------
@@ -686,6 +706,8 @@
       messagesCache = [];
       snap.forEach(d => messagesCache.push({ id: d.id, ...d.data() }));
       renderMessages();
+      // User is actively viewing this event's chat, so anything new is "seen"
+      if (currentSideId === eventId) markSeen(eventId);
     }, (err) => {
       console.error(err);
       // Most likely cause: Firestore rules don't allow the messages path
@@ -717,18 +739,48 @@
     text = (text || "").trim();
     if (!text) return;
     try {
-      await addDoc(collection(db, "houses", houseCode, "events", eventId, "messages"), {
-        text, author: displayName, createdAt: serverTimestamp(),
-      });
+      // Send message + bump the parent event's lastMessageAt so unread badges work
+      await Promise.all([
+        addDoc(collection(db, "houses", houseCode, "events", eventId, "messages"), {
+          text, author: displayName, createdAt: serverTimestamp(),
+        }),
+        updateDoc(doc(db, "houses", houseCode, "events", eventId), {
+          lastMessageAt: serverTimestamp(),
+          lastMessageBy: displayName,
+        }),
+      ]);
+      // Don't badge our own message on our own screen
+      markSeen(eventId);
     } catch (err) {
       console.error(err);
       toast("Couldn't send — check Firestore rules");
     }
   }
+
+  // ---------- Unread tracking (per-device, in localStorage) ----------
+  function markSeen(eventId) {
+    try { localStorage.setItem("sp.lastSeen." + eventId, String(Date.now())); }
+    catch {}
+  }
+  function lastSeenMs(eventId) {
+    const raw = localStorage.getItem("sp.lastSeen." + eventId);
+    return raw ? Number(raw) : 0;
+  }
+  function hasUnread(eventId, data) {
+    if (!data?.lastMessageAt) return false;
+    // Firestore Timestamp → millis (handles pending writes where toMillis may be 0)
+    const last = data.lastMessageAt.toMillis ? data.lastMessageAt.toMillis() : 0;
+    if (!last) return false;
+    // Don't show unread for messages we sent ourselves while offline
+    if (data.lastMessageBy === displayName && last - lastSeenMs(eventId) < 60_000) return false;
+    return last > lastSeenMs(eventId);
+  }
   function showInSide(id) {
     const data = eventsCache.get(id);
     if (!data) return;
     currentSideId = id;
+    markSeen(id);            // opening the event clears its unread badge
+    refreshCalendarEvents(); // re-render so the dot disappears immediately
     const cat = CATEGORIES[data.category] || CATEGORIES.other;
     const invitees = (data.invitees || []).filter(Boolean);
     const rsvps = data.rsvps || {};
