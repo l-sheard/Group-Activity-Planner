@@ -498,9 +498,25 @@
     </div>
     <div class="row">
       <div class="field">
-        <label>Date</label>
+        <label>Start date</label>
         <input id="evDate" type="date" />
       </div>
+      <div class="field">
+        <label>End date <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(blank = single day)</span></label>
+        <input id="evEndDate" type="date" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Start time <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(blank = all-day)</span></label>
+        <input id="evStartTime" type="time" />
+      </div>
+      <div class="field">
+        <label>End time <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(optional)</span></label>
+        <input id="evEndTime" type="time" />
+      </div>
+    </div>
+    <div class="row">
       <div class="field">
         <label>Category</label>
         <select id="evCategory">
@@ -512,26 +528,14 @@
           <option value="other">Other</option>
         </select>
       </div>
-    </div>
-    <div class="row">
-      <div class="field">
-        <label>Start time <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(leave blank for all-day)</span></label>
-        <input id="evStartTime" type="time" />
-      </div>
-      <div class="field">
-        <label>End time <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(optional)</span></label>
-        <input id="evEndTime" type="time" />
-      </div>
-    </div>
-    <div class="row">
       <div class="field">
         <label>Cost per person (£)</label>
         <input id="evCost" type="number" min="0" step="0.5" placeholder="0" />
       </div>
-      <div class="field">
-        <label>Location</label>
-        <input id="evLocation" placeholder="Optional" />
-      </div>
+    </div>
+    <div class="field">
+      <label>Location</label>
+      <input id="evLocation" placeholder="Optional" />
     </div>
     <div class="field">
       <label>Who's coming (comma-separated)</label>
@@ -676,7 +680,10 @@
             updatedBy: displayName,
           };
           if (info.event.end) {
-            patch.end = serializeDateTime(info.event.end, info.event.allDay);
+            let endStr = serializeDateTime(info.event.end, info.event.allDay);
+            // For all-day events FullCalendar returns an EXCLUSIVE end — step back one day for storage.
+            if (info.event.allDay) endStr = addDaysISO(endStr, -1);
+            patch.end = endStr;
           }
           await updateDoc(
             doc(db, "houses", houseCode, "events", info.event.id),
@@ -708,7 +715,13 @@
         textColor: cat.fg,
         classNames: unread ? ["has-unread"] : [],
       };
-      if (data.end) ev.end = data.end;
+      if (data.end) {
+        // FullCalendar's end is EXCLUSIVE for all-day events. We store inclusive,
+        // so bump by one day before handing it over.
+        ev.end = (allDay && isAllDayStart(data.end))
+          ? addDaysISO(data.end, 1)
+          : data.end;
+      }
       fcEvents.push(ev);
     }
     calendar.removeAllEvents();
@@ -1034,6 +1047,7 @@
     const endParts   = splitDateTime(data?.end);
     $("#evTitle").value     = data?.title || "";
     $("#evDate").value      = startParts.date || presetDate || todayISO();
+    $("#evEndDate").value   = endParts.date && endParts.date !== startParts.date ? endParts.date : "";
     $("#evStartTime").value = startParts.time || "";
     $("#evEndTime").value   = endParts.time || "";
     $("#evCategory").value  = data?.category || "social";
@@ -1060,10 +1074,28 @@
   $("#evCancel").addEventListener("click", closeEventModal);
   $("#evSave").addEventListener("click", async () => {
     const date      = $("#evDate").value;
-    const startTime = $("#evStartTime").value;  // "" or "HH:MM"
+    const endDate   = $("#evEndDate").value || date;       // "" → same as start
+    const startTime = $("#evStartTime").value;             // "" or "HH:MM"
     const endTime   = $("#evEndTime").value;
     const startStr  = startTime ? `${date}T${startTime}` : date;
-    const endStr    = (startTime && endTime) ? `${date}T${endTime}` : null;
+
+    // Build end string. Use the end date if it differs from start, OR if there's an end time.
+    let endStr = null;
+    const multiDay = endDate && endDate !== date;
+    if (startTime) {
+      if (multiDay || endTime) {
+        endStr = `${endDate}T${endTime || startTime}`;
+      }
+    } else if (multiDay) {
+      endStr = endDate;                                    // all-day multi-day, store inclusive
+    }
+
+    // Validation: end must not be before start
+    if (endStr) {
+      const startCmp = startTime ? new Date(startStr) : new Date(date + "T00:00");
+      const endCmp   = startTime ? new Date(endStr)   : new Date(endDate + "T00:00");
+      if (endCmp < startCmp) { toast("End is before start"); return; }
+    }
 
     const isDinner = $("#evIsDinner").checked;
     const payload = {
@@ -1205,20 +1237,49 @@
     return `${date}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   }
 
+  // Shift a date-only string (YYYY-MM-DD) by N days
+  function addDaysISO(iso, days) {
+    if (!iso) return iso;
+    const hasTime = iso.includes("T");
+    const datePart = hasTime ? iso.split("T")[0] : iso;
+    const d = new Date(datePart + "T00:00");
+    d.setDate(d.getDate() + days);
+    const out = `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+    return hasTime ? `${out}T${iso.split("T")[1]}` : out;
+  }
+
   // Human-readable date/time for the side panel (UK format: day before month, 24h time)
-  const UK_DATE = { weekday: "long", day: "numeric", month: "long" };
-  const UK_TIME = { hour: "2-digit", minute: "2-digit", hour12: false };
+  const UK_DATE       = { weekday: "long", day: "numeric", month: "long" };
+  const UK_DATE_SHORT = { weekday: "short", day: "numeric", month: "short" };
+  const UK_TIME       = { hour: "2-digit", minute: "2-digit", hour12: false };
   function formatWhen(start, end) {
     if (!start) return "";
     const startAllDay = isAllDayStart(start);
     const startDate = new Date(startAllDay ? start + "T00:00" : start);
-    const dateLabel = startDate.toLocaleDateString("en-GB", UK_DATE);
-    if (startAllDay) return `${dateLabel} · all day`;
+    const startDateStr   = (start.split("T")[0]);
+
+    if (startAllDay) {
+      const dateLabel = startDate.toLocaleDateString("en-GB", UK_DATE);
+      if (!end || end === startDateStr) return `${dateLabel} · all day`;
+      // Multi-day all-day event
+      const endDateObj = new Date(end + "T00:00");
+      const days = Math.round((endDateObj - startDate) / 86_400_000) + 1;
+      return `${startDate.toLocaleDateString("en-GB", UK_DATE_SHORT)} – ${endDateObj.toLocaleDateString("en-GB", UK_DATE_SHORT)} · ${days} days`;
+    }
+
+    // Timed event
     const startT = startDate.toLocaleTimeString("en-GB", UK_TIME);
-    if (!end) return `${dateLabel} · ${startT}`;
-    const endDate = new Date(isAllDayStart(end) ? end + "T00:00" : end);
+    if (!end) {
+      return `${startDate.toLocaleDateString("en-GB", UK_DATE)} · ${startT}`;
+    }
+    const endDate = new Date(end);
     const endT = endDate.toLocaleTimeString("en-GB", UK_TIME);
-    return `${dateLabel} · ${startT} – ${endT}`;
+    const endDateStr = end.split("T")[0];
+    if (endDateStr === startDateStr) {
+      return `${startDate.toLocaleDateString("en-GB", UK_DATE)} · ${startT} – ${endT}`;
+    }
+    // Multi-day timed event
+    return `${startDate.toLocaleDateString("en-GB", UK_DATE_SHORT)} ${startT} – ${endDate.toLocaleDateString("en-GB", UK_DATE_SHORT)} ${endT}`;
   }
 
   // ---------- Kickoff ----------
