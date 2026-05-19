@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Summer Planner</title>
+
+<!-- FullCalendar (drag-and-drop month view) -->
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+
+<!-- Firebase config — kept in a separate file so it stays out of git. See README. -->
+<script src="config.js"></script>
+
+<!-- Friendly rounded font -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    /* Warm cream + pastels */
+    --bg: #fdf6ec;
+    --bg-tint: #f7eedc;
+    --surface: #ffffff;
+    --border: #f1e6d0;
+    --border-strong: #e6d6b5;
+    --text: #3a2f2a;
+    --muted: #9a8a7d;
+    --accent: #2c2540;          /* deep plum for primary buttons */
+    --accent-soft: #f4ecff;
+    --danger: #d14b4b;
+
+    /* Pastel category swatches (bg + matching darker text) */
+    --p-lavender-bg:#ece4ff; --p-lavender-fg:#6b4ce6;
+    --p-mint-bg:    #dbf5e3; --p-mint-fg:    #1f8a4f;
+    --p-peach-bg:   #ffe1cf; --p-peach-fg:   #c25a14;
+    --p-pink-bg:    #ffd9e6; --p-pink-fg:    #c2185b;
+    --p-sky-bg:     #d8ecf7; --p-sky-fg:     #1a7195;
+    --p-sand-bg:    #efe7da; --p-sand-fg:    #7a6a55;
+
+    --radius: 14px;
+    --radius-lg: 20px;
+    --shadow: 0 2px 4px rgba(58,47,42,.04), 0 8px 24px rgba(58,47,42,.06);
+    --font: "Quicksand", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    background: var(--bg);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- Layout ---------- */
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+
+  header.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  header .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+  }
+  header .brand .dot {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #fde68a 0%, #fbbf24 50%, #f97316 100%);
+    box-shadow: 0 2px 8px rgba(251, 146, 60, .35);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  header .meta {
+    display: flex; align-items: center; gap: 12px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  header .meta .house-code {
+    background: var(--p-lavender-bg);
+    color: var(--p-lavender-fg);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 12px;
+  }
+
+  main.body { display: grid; grid-template-columns: 1fr 340px; overflow: hidden; }
+  .calendar-wrap {
+    padding: 22px 28px;
+    overflow: auto;
+  }
+  .calendar-card {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    box-shadow: var(--shadow);
+  }
+  .side {
+    border-left: 1px solid var(--border);
+    background: var(--bg-tint);
+    overflow-y: auto;
+    padding: 22px;
+  }
+  .side-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 16px;
+    box-shadow: var(--shadow);
+  }
+
+  /* ---------- Buttons / form ---------- */
+  button, .btn {
+    font: inherit;
+    font-weight: 600;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    padding: 9px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, transform .1s;
+  }
+  button:hover { background: var(--accent-soft); }
+  button:active { transform: translateY(1px); }
+  button.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+    box-shadow: 0 4px 14px rgba(44, 37, 64, .2);
+  }
+  button.primary:hover { background: #1d1730; }
+  button.danger { color: var(--danger); border-color: #f8c9c9; background: #fff5f5; }
+  button.ghost { border-color: transparent; background: transparent; }
+  button.ghost:hover { background: var(--accent-soft); }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
+  input, select, textarea {
+    width: 100%; font: inherit;
+    color: var(--text); background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--p-lavender-fg);
+    box-shadow: 0 0 0 3px var(--p-lavender-bg);
+  }
+  textarea { min-height: 70px; resize: vertical; }
+  .field { margin-bottom: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ---------- Side panel ---------- */
+  .side h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 12px;
+    font-weight: 700;
+  }
+  .side .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
+  .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .stack > * + * { margin-top: 10px; }
+
+  /* ---------- Modal ---------- */
+  .modal-bg {
+    position: fixed; inset: 0;
+    background: rgba(58, 47, 42, .35);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    width: 100%; max-width: 460px;
+    padding: 28px;
+  }
+  .modal h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .modal p { color: var(--muted); margin: 0 0 16px; }
+
+  /* ---------- Category pill ---------- */
+  .pill {
+    display: inline-flex; align-items: center;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  /* ---------- FullCalendar overrides ---------- */
+  .fc {
+    --fc-border-color: var(--border);
+    --fc-page-bg-color: var(--surface);
+    --fc-neutral-bg-color: var(--bg-tint);
+    --fc-today-bg-color: #fff7d6;
+    font-family: var(--font);
+  }
+  .fc .fc-toolbar-title {
+    font-size: 20px; font-weight: 700; letter-spacing: -0.01em;
+  }
+  .fc .fc-button {
+    background: var(--bg-tint) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border) !important;
+    font-weight: 600 !important;
+    text-transform: none !important;
+    border-radius: 999px !important;
+    padding: 6px 14px !important;
+    box-shadow: none !important;
+  }
+  .fc .fc-button:hover { background: var(--accent-soft) !important; }
+  .fc .fc-button-primary:not(:disabled).fc-button-active,
+  .fc .fc-button-primary:not(:disabled):active {
+    background: var(--accent) !important;
+    color: #fff !important;
+    border-color: var(--accent) !important;
+  }
+  .fc-col-header-cell { background: var(--bg-tint); }
+  .fc-col-header-cell-cushion {
+    color: var(--muted); font-weight: 700;
+    text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em;
+    padding: 8px 4px !important;
+  }
+  .fc-daygrid-day-number {
+    color: var(--text); padding: 8px 10px; font-weight: 600;
+  }
+  .fc-day-today .fc-daygrid-day-number {
+    background: var(--accent); color: #fff;
+    border-radius: 50%;
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    margin: 4px;
+    padding: 0;
+    font-size: 13px;
+  }
+  .fc-event {
+    border: none !important;
+    padding: 4px 8px !important;
+    border-radius: 10px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    cursor: pointer;
+    margin: 2px 4px !important;
+    box-shadow: 0 1px 2px rgba(58, 47, 42, .04);
+  }
+  .fc-event:hover { transform: translateY(-1px); transition: transform .1s; }
+  .fc-daygrid-event-dot { display: none !important; }
+  .fc-event-time { font-weight: 700 !important; opacity: .85; }
+
+  /* small helpers */
+  .muted { color: var(--muted); }
+  .cost { font-variant-numeric: tabular-nums; }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #fff;
+    padding: 10px 16px; border-radius: 6px;
+    font-size: 13px;
+    box-shadow: var(--shadow);
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s;
+    z-index: 200;
+  }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 800px) {
+    main.body { grid-template-columns: 1fr; }
+    .side { border-left: none; border-top: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="dot">☀</span> Summer Planner</div>
+    <div class="meta">
+      <span id="houseLabel" class="muted">Not connected</span>
+      <span id="houseCode" class="house-code" style="display:none"></span>
+      <button id="inviteBtn" class="ghost" title="Copy invite link" style="display:none">Invite</button>
+      <button id="newEventBtn" class="primary">+ New event</button>
+    </div>
+  </header>
+
+  <main class="body">
+    <div class="calendar-wrap"><div class="calendar-card"><div id="calendar"></div></div></div>
+
+    <aside class="side">
+      <h2>✨ Details</h2>
+      <div class="side-card" id="sideContent">
+        <div class="empty">Tap an event for details, or drag any event to a new day to reschedule.</div>
+      </div>
+
+      <h2 style="margin-top: 24px">🌻 This month</h2>
+      <div class="side-card"><div id="summary" class="muted" style="font-size:13px">—</div></div>
+    </aside>
+  </main>
+</div>
+
+<!-- ---------- Setup / join modal ---------- -->
+<div id="setupModal" class="modal-bg">
+  <div class="modal stack">
+    <h1>Join your house</h1>
+    <p>Pick a name and a shared house code. Everyone using the same code sees the same calendar.</p>
+    <div class="field">
+      <label>Your name</label>
+      <input id="setupName" placeholder="e.g. Lara" />
+    </div>
+    <div class="field">
+      <label>House code</label>
+      <input id="setupCode" placeholder="e.g. flat-42" />
+      <div class="muted" style="font-size:12px;margin-top:4px">Share this code (or the Invite link) with your flatmates.</div>
+    </div>
+    <div class="actions">
+      <button id="setupGo" class="primary" style="flex:1">Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- ---------- Firebase config warning ---------- -->
+<div id="configModal" class="modal-bg">
+  <div class="modal stack">
+    <h1>One-time setup needed</h1>
+    <p>This app uses Firebase for shared data. Paste your Firebase config into <code>index.html</code> (look for <code>FIREBASE_CONFIG</code> near the bottom of the file). The <code>README.md</code> walks through it.</p>
+    <button class="primary" onclick="document.getElementById('configModal').classList.remove('open')">Got it</button>
+  </div>
+</div>
+
+<!-- ---------- Event modal ---------- -->
+<div id="eventModal" class="modal-bg">
+  <div class="modal stack">
+    <h1 id="eventModalTitle">New event</h1>
+    <div class="field">
+      <label>Title</label>
+      <input id="evTitle" placeholder="Beach day, pub quiz, etc." />
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Date</label>
+        <input id="evDate" type="date" />
+      </div>
+      <div class="field">
+        <label>Category</label>
+        <select id="evCategory">
+          <option value="social">Social</option>
+          <option value="trip">Day trip</option>
+          <option value="food">Food / cooking</option>
+          <option value="night">Night out</option>
+          <option value="chill">Chill</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Start time <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(leave blank for all-day)</span></label>
+        <input id="evStartTime" type="time" />
+      </div>
+      <div class="field">
+        <label>End time <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">(optional)</span></label>
+        <input id="evEndTime" type="time" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Cost per person (£)</label>
+        <input id="evCost" type="number" min="0" step="0.5" placeholder="0" />
+      </div>
+      <div class="field">
+        <label>Location</label>
+        <input id="evLocation" placeholder="Optional" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Who's coming (comma-separated)</label>
+      <input id="evInvitees" placeholder="Lara, Sam, Priya..." />
+    </div>
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="evNotes" placeholder="Anything to remember"></textarea>
+    </div>
+    <div class="actions">
+      <button id="evCancel" class="ghost">Cancel</button>
+      <button id="evDelete" class="danger" style="display:none">Delete</button>
+      <button id="evSave" class="primary" style="margin-left:auto">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- ---------- App ---------- -->
+<script type="module">
+  // ============================================================
+  //  Firebase config is loaded from ./config.js (gitignored).
+  //  Copy config.example.js to config.js and fill in your values.
+  // ============================================================
+  const FIREBASE_CONFIG = window.FIREBASE_CONFIG || { apiKey: "PASTE_API_KEY" };
+  // ============================================================
+
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import {
+    getFirestore, collection, onSnapshot,
+    addDoc, doc, updateDoc, deleteDoc, serverTimestamp,
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  // Category -> { label, pastel bg, matching darker text }
+  const CATEGORIES = {
+    social: { label: "Social",    bg: "#ece4ff", fg: "#6b4ce6" },
+    trip:   { label: "Day trip",  bg: "#dbf5e3", fg: "#1f8a4f" },
+    food:   { label: "Food",      bg: "#ffe1cf", fg: "#c25a14" },
+    night:  { label: "Night out", bg: "#ffd9e6", fg: "#c2185b" },
+    chill:  { label: "Chill",     bg: "#d8ecf7", fg: "#1a7195" },
+    other:  { label: "Other",     bg: "#efe7da", fg: "#7a6a55" },
+  };
+
+  const $ = (sel) => document.querySelector(sel);
+  const toast = (msg) => {
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => t.classList.remove("show"), 2000);
+  };
+
+  // ---------- Detect missing config ----------
+  const CONFIG_OK = FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "PASTE_API_KEY";
+  if (!CONFIG_OK) $("#configModal").classList.add("open");
+
+  // ---------- Firebase init (only if config looks filled in) ----------
+  let db, auth, user;
+  if (CONFIG_OK) {
+    try {
+      const app = initializeApp(FIREBASE_CONFIG);
+      db = getFirestore(app);
+      auth = getAuth(app);
+    } catch (e) {
+      console.error("Firebase init failed:", e);
+      toast("Firebase init failed — check your config");
+    }
+  }
+
+  // ---------- House code (URL param or localStorage) ----------
+  const params = new URLSearchParams(location.search);
+  let houseCode = (params.get("house") || localStorage.getItem("sp.houseCode") || "").trim();
+  let displayName = localStorage.getItem("sp.name") || "";
+
+  function showSetup() {
+    $("#setupName").value = displayName;
+    $("#setupCode").value = houseCode;
+    $("#setupModal").classList.add("open");
+  }
+  function hideSetup() { $("#setupModal").classList.remove("open"); }
+
+  $("#setupGo").addEventListener("click", () => {
+    const name = $("#setupName").value.trim();
+    const code = $("#setupCode").value.trim().toLowerCase().replace(/\s+/g, "-");
+    if (!name || !code) { toast("Both fields are required"); return; }
+    displayName = name; houseCode = code;
+    localStorage.setItem("sp.name", name);
+    localStorage.setItem("sp.houseCode", code);
+    hideSetup();
+    boot();
+  });
+
+  // ---------- Invite link ----------
+  $("#inviteBtn").addEventListener("click", async () => {
+    const url = `${location.origin}${location.pathname}?house=${encodeURIComponent(houseCode)}`;
+    try { await navigator.clipboard.writeText(url); toast("Invite link copied"); }
+    catch { prompt("Copy this invite link:", url); }
+  });
+
+  // ---------- Calendar ----------
+  let calendar;
+  const eventsCache = new Map(); // id -> data
+  let editingId = null;
+
+  function renderCalendar() {
+    const el = $("#calendar");
+    calendar = new FullCalendar.Calendar(el, {
+      initialView: "dayGridMonth",
+      height: "auto",
+      locale: "en-GB",
+      firstDay: 1, // Monday
+      headerToolbar: {
+        left: "prev,next today",
+        center: "title",
+        right: "dayGridMonth,timeGridWeek,listMonth",
+      },
+      buttonText: { today: "Today", month: "Month", week: "Week", list: "List" },
+      editable: true,
+      eventStartEditable: true,
+      eventOrder: "start,title",   // sort multiple events on a day by time
+      displayEventTime: true,
+      events: [],
+      dateClick: (info) => openEventModal(null, info.dateStr),
+      eventClick: (info) => showInSide(info.event.id),
+      eventDrop: async (info) => {
+        try {
+          const patch = {
+            start: serializeDateTime(info.event.start, info.event.allDay),
+            updatedAt: serverTimestamp(),
+            updatedBy: displayName,
+          };
+          if (info.event.end) {
+            patch.end = serializeDateTime(info.event.end, info.event.allDay);
+          }
+          await updateDoc(
+            doc(db, "houses", houseCode, "events", info.event.id),
+            patch
+          );
+          toast("Moved");
+        } catch (e) {
+          console.error(e); toast("Couldn't move event"); info.revert();
+        }
+      },
+    });
+    calendar.render();
+  }
+
+  function refreshCalendarEvents() {
+    if (!calendar) return;
+    const fcEvents = [];
+    for (const [id, data] of eventsCache) {
+      const cat = CATEGORIES[data.category] || CATEGORIES.other;
+      const allDay = isAllDayStart(data.start);
+      const ev = {
+        id,
+        title: data.title || "Untitled",
+        start: data.start,
+        allDay,
+        backgroundColor: cat.bg,
+        borderColor: cat.bg,
+        textColor: cat.fg,
+      };
+      if (data.end) ev.end = data.end;
+      fcEvents.push(ev);
+    }
+    calendar.removeAllEvents();
+    calendar.addEventSource(fcEvents);
+    renderSummary();
+  }
+
+  function renderSummary() {
+    const now = new Date();
+    const month = now.getMonth(), year = now.getFullYear();
+    let count = 0, total = 0;
+    for (const data of eventsCache.values()) {
+      if (!data.start) continue;
+      // Pull the date portion only so timed events bucket into the right month locally
+      const datePart = data.start.includes("T") ? data.start.split("T")[0] : data.start;
+      const d = new Date(datePart + "T00:00");
+      if (d.getMonth() === month && d.getFullYear() === year) {
+        count++;
+        total += Number(data.cost) || 0;
+      }
+    }
+    $("#summary").innerHTML = count === 0
+      ? "No events yet this month."
+      : `<strong>${count}</strong> event${count === 1 ? "" : "s"} planned · <span class="cost">£${total.toFixed(2)}</span> total per-person budget`;
+  }
+
+  // ---------- Side panel ----------
+  function showInSide(id) {
+    const data = eventsCache.get(id);
+    if (!data) return;
+    const cat = CATEGORIES[data.category] || CATEGORIES.other;
+    const invitees = (data.invitees || []).filter(Boolean);
+    $("#sideContent").innerHTML = `
+      <div class="stack">
+        <div><span class="pill" style="background:${cat.bg};color:${cat.fg}">${cat.label}</span></div>
+        <div style="font-size:18px;font-weight:700;letter-spacing:-0.01em">${escapeHtml(data.title || "Untitled")}</div>
+        <div class="muted" style="font-weight:500">${formatWhen(data.start, data.end)}</div>
+        ${data.location ? `<div>📍 ${escapeHtml(data.location)}</div>` : ""}
+        ${data.cost ? `<div>💷 <span class="cost">£${Number(data.cost).toFixed(2)}</span> per person</div>` : ""}
+        ${invitees.length ? `<div><span class="muted">Coming:</span> ${invitees.map(escapeHtml).join(", ")}</div>` : ""}
+        ${data.notes ? `<div style="white-space:pre-wrap;padding:12px;background:var(--bg-tint);border-radius:10px;font-size:13px">${escapeHtml(data.notes)}</div>` : ""}
+        <div class="actions">
+          <button data-act="edit" data-id="${id}">Edit</button>
+          <button class="danger" data-act="del" data-id="${id}">Delete</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function clearSide() {
+    $("#sideContent").innerHTML = `<div class="empty">Tap an event for details, or drag any event to a new day to reschedule.</div>`;
+  }
+
+  // Delegated handler for side-panel buttons (Edit / Delete)
+  $("#sideContent").addEventListener("click", async (e) => {
+    const b = e.target.closest("button[data-act]");
+    if (!b) return;
+    const id = b.dataset.id;
+    if (b.dataset.act === "edit") openEventModal(id);
+    if (b.dataset.act === "del") {
+      if (!confirm("Delete this event?")) return;
+      try { await deleteDoc(doc(db, "houses", houseCode, "events", id)); toast("Deleted"); clearSide(); }
+      catch (err) { console.error(err); toast("Couldn't delete"); }
+    }
+  });
+
+  // ---------- Event modal ----------
+  const evModal = $("#eventModal");
+  function openEventModal(id, presetDate) {
+    editingId = id;
+    $("#eventModalTitle").textContent = id ? "Edit event" : "New event";
+    $("#evDelete").style.display = id ? "inline-block" : "none";
+
+    const data = id ? eventsCache.get(id) : null;
+    const startParts = splitDateTime(data?.start);
+    const endParts   = splitDateTime(data?.end);
+    $("#evTitle").value     = data?.title || "";
+    $("#evDate").value      = startParts.date || presetDate || todayISO();
+    $("#evStartTime").value = startParts.time || "";
+    $("#evEndTime").value   = endParts.time || "";
+    $("#evCategory").value  = data?.category || "social";
+    $("#evCost").value      = data?.cost ?? "";
+    $("#evLocation").value  = data?.location || "";
+    $("#evInvitees").value  = (data?.invitees || []).join(", ");
+    $("#evNotes").value     = data?.notes || "";
+
+    evModal.classList.add("open");
+    setTimeout(() => $("#evTitle").focus(), 50);
+  }
+  function closeEventModal() { evModal.classList.remove("open"); editingId = null; }
+
+  $("#evCancel").addEventListener("click", closeEventModal);
+  $("#evSave").addEventListener("click", async () => {
+    const date      = $("#evDate").value;
+    const startTime = $("#evStartTime").value;  // "" or "HH:MM"
+    const endTime   = $("#evEndTime").value;
+    const startStr  = startTime ? `${date}T${startTime}` : date;
+    const endStr    = (startTime && endTime) ? `${date}T${endTime}` : null;
+
+    const payload = {
+      title:    $("#evTitle").value.trim(),
+      start:    startStr,
+      end:      endStr,                  // null clears any previous end
+      category: $("#evCategory").value,
+      cost:     parseFloat($("#evCost").value) || 0,
+      location: $("#evLocation").value.trim(),
+      invitees: $("#evInvitees").value.split(",").map(s => s.trim()).filter(Boolean),
+      notes:    $("#evNotes").value.trim(),
+      updatedAt: serverTimestamp(),
+      updatedBy: displayName,
+    };
+    if (!payload.title) { toast("Give it a title"); return; }
+    if (!date)          { toast("Pick a date"); return; }
+
+    try {
+      if (editingId) {
+        await updateDoc(doc(db, "houses", houseCode, "events", editingId), payload);
+        toast("Saved");
+      } else {
+        payload.createdAt = serverTimestamp();
+        payload.createdBy = displayName;
+        await addDoc(collection(db, "houses", houseCode, "events"), payload);
+        toast("Added");
+      }
+      closeEventModal();
+    } catch (e) {
+      console.error(e);
+      toast("Couldn't save — check Firestore rules");
+    }
+  });
+  $("#evDelete").addEventListener("click", async () => {
+    if (!editingId) return;
+    if (!confirm("Delete this event?")) return;
+    try {
+      await deleteDoc(doc(db, "houses", houseCode, "events", editingId));
+      toast("Deleted");
+      closeEventModal();
+      clearSide();
+    } catch (e) { console.error(e); toast("Couldn't delete"); }
+  });
+
+  $("#newEventBtn").addEventListener("click", () => {
+    if (!db || !houseCode) { showSetup(); return; }
+    openEventModal(null);
+  });
+
+  // ---------- Auth + Firestore subscription ----------
+  function boot() {
+    if (!db || !auth) { return; }
+    if (!houseCode || !displayName) { showSetup(); return; }
+
+    $("#houseLabel").textContent = `Signed in as ${displayName}`;
+    $("#houseCode").textContent = `house: ${houseCode}`;
+    $("#houseCode").style.display = "inline";
+    $("#inviteBtn").style.display = "inline-block";
+
+    signInAnonymously(auth).catch(err => {
+      console.error(err);
+      toast("Auth failed — enable Anonymous sign-in in Firebase");
+    });
+
+    onAuthStateChanged(auth, (u) => {
+      if (!u) return;
+      user = u;
+      if (!calendar) renderCalendar();
+      subscribeEvents();
+    });
+  }
+
+  let unsub = null;
+  function subscribeEvents() {
+    if (unsub) unsub();
+    const ref = collection(db, "houses", houseCode, "events");
+    unsub = onSnapshot(ref, (snap) => {
+      eventsCache.clear();
+      snap.forEach(d => eventsCache.set(d.id, d.data()));
+      refreshCalendarEvents();
+    }, (err) => {
+      console.error(err);
+      toast("Couldn't load events — check Firestore rules");
+    });
+  }
+
+  // ---------- Utils ----------
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
+  function todayISO() {
+    const d = new Date(); const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+  const pad2 = (n) => String(n).padStart(2, "0");
+
+  // A start string is "all day" if it's just YYYY-MM-DD (no "T")
+  function isAllDayStart(s) { return typeof s === "string" && !s.includes("T"); }
+
+  // Split a stored start/end into {date, time} for the modal inputs
+  function splitDateTime(s) {
+    if (!s) return { date: "", time: "" };
+    if (s.includes("T")) {
+      const [d, t] = s.split("T");
+      return { date: d, time: (t || "").slice(0, 5) }; // HH:MM
+    }
+    return { date: s, time: "" };
+  }
+
+  // Format a JS Date for Firestore as either "YYYY-MM-DD" (all-day) or "YYYY-MM-DDTHH:MM"
+  function serializeDateTime(d, allDay) {
+    if (!d) return null;
+    const date = `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+    if (allDay) return date;
+    return `${date}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+
+  // Human-readable date/time for the side panel (UK format: day before month, 24h time)
+  const UK_DATE = { weekday: "long", day: "numeric", month: "long" };
+  const UK_TIME = { hour: "2-digit", minute: "2-digit", hour12: false };
+  function formatWhen(start, end) {
+    if (!start) return "";
+    const startAllDay = isAllDayStart(start);
+    const startDate = new Date(startAllDay ? start + "T00:00" : start);
+    const dateLabel = startDate.toLocaleDateString("en-GB", UK_DATE);
+    if (startAllDay) return `${dateLabel} · all day`;
+    const startT = startDate.toLocaleTimeString("en-GB", UK_TIME);
+    if (!end) return `${dateLabel} · ${startT}`;
+    const endDate = new Date(isAllDayStart(end) ? end + "T00:00" : end);
+    const endT = endDate.toLocaleTimeString("en-GB", UK_TIME);
+    return `${dateLabel} · ${startT} – ${endT}`;
+  }
+
+  // ---------- Kickoff ----------
+  if (CONFIG_OK) {
+    if (houseCode && displayName) boot();
+    else showSetup();
+  }
+  // If config isn't filled in, the configModal is already shown above.
+</script>
+
+</body>
+</html>

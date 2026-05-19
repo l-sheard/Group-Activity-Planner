@@ -1,0 +1,10 @@
+# Real Firebase config — never commit
+config.js
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
