@@ -1001,7 +1001,7 @@
         <div><span class="pill" style="background:${cat.bg};color:${cat.fg}">${cat.label}</span></div>
         <div style="font-size:18px;font-weight:700;letter-spacing:-0.01em">${escapeHtml(data.title || "Untitled")}</div>
         <div class="muted" style="font-weight:500">${formatWhen(data.start, data.end)}</div>
-        ${data.location ? `<div>📍 ${escapeHtml(data.location)}<span class="weather-slot" id="wx-slot-${id}"></span></div>` : ""}
+        <div>📍 ${data.location ? escapeHtml(data.location) : `<span class="muted">Bath, UK</span>`}<span class="weather-slot" id="wx-slot-${id}"></span></div>
         ${data.cost ? `<div>💷 <span class="cost">£${Number(data.cost).toFixed(2)}</span> per person</div>` : ""}
         ${data.notes ? `<div style="white-space:pre-wrap;padding:12px;background:var(--bg-tint);border-radius:10px;font-size:13px">${escapeHtml(data.notes)}</div>` : ""}
 
@@ -1037,10 +1037,11 @@
       </div>
     `;
 
-    // Fetch & inject weather forecast (if we have a location)
-    if (data.location && data.start) {
+    // Fetch & inject weather — default to Bath, UK when no location is set
+    if (data.start) {
       const dateOnly = data.start.includes("T") ? data.start.split("T")[0] : data.start;
-      injectWeather(id, data.location, dateOnly);
+      const weatherLocation = data.location || "Bath, UK";
+      injectWeather(id, weatherLocation, dateOnly);
     }
 
     // Subscribe to this event's chat (only re-subscribe if switching events)
