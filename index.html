@@ -239,6 +239,47 @@
     margin-top: 8px;
   }
 
+  /* ---------- Wish list / brainstorm ---------- */
+  .wish-add {
+    display: flex; gap: 6px; margin-bottom: 8px;
+  }
+  .wish-add input { flex: 1; border-radius: 999px; padding: 9px 14px; }
+  .wish-add button#wishAdd {
+    padding: 0; width: 36px; height: 36px;
+    font-size: 18px; font-weight: 700; line-height: 1;
+  }
+  .wish-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    margin-bottom: 4px;
+    background: var(--bg-tint);
+    font-size: 13px;
+  }
+  .wish-item .wish-title { flex: 1; font-weight: 500; word-break: break-word; }
+  .wish-item .wish-by { color: var(--muted); font-size: 11px; }
+  .wish-item button {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 999px;
+  }
+  .wish-empty { color: var(--muted); font-size: 13px; padding: 6px 4px; text-align: center; }
+
+  /* ---------- Weather pill ---------- */
+  .weather {
+    display: inline-block;
+    margin-left: 8px;
+    background: var(--p-sky-bg);
+    color: var(--p-sky-fg);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+
   /* ---------- House dinner ---------- */
   .menu-card {
     background: #fff7d6;
@@ -445,7 +486,9 @@
   }
   body.guest-mode .side > h2:first-of-type { display: none; }
   body.guest-mode .side > h2.this-month,
-  body.guest-mode .side > h2.this-month + .side-card { display: none; }
+  body.guest-mode .side > h2.this-month + .side-card,
+  body.guest-mode .side > h2.ideas-heading,
+  body.guest-mode .side > .ideas-card { display: none; }
   body.guest-mode #newEventBtn,
   body.guest-mode #inviteBtn,
   body.guest-mode #houseCode,
@@ -485,6 +528,15 @@
       <h2>✨ Details</h2>
       <div class="side-card" id="sideContent">
         <div class="empty">Tap an event for details, or drag any event to a new day to reschedule.</div>
+      </div>
+
+      <h2 class="ideas-heading" style="margin-top: 24px">💭 Ideas</h2>
+      <div class="side-card ideas-card">
+        <div class="wish-add">
+          <input id="wishInput" placeholder="Add a summer idea…" autocomplete="off" />
+          <button class="primary" id="wishAdd" title="Add idea">+</button>
+        </div>
+        <div id="wishList"></div>
       </div>
 
       <h2 class="this-month" style="margin-top: 24px">🌻 This month</h2>
@@ -949,7 +1001,7 @@
         <div><span class="pill" style="background:${cat.bg};color:${cat.fg}">${cat.label}</span></div>
         <div style="font-size:18px;font-weight:700;letter-spacing:-0.01em">${escapeHtml(data.title || "Untitled")}</div>
         <div class="muted" style="font-weight:500">${formatWhen(data.start, data.end)}</div>
-        ${data.location ? `<div>📍 ${escapeHtml(data.location)}</div>` : ""}
+        ${data.location ? `<div>📍 ${escapeHtml(data.location)}<span class="weather-slot" id="wx-slot-${id}"></span></div>` : ""}
         ${data.cost ? `<div>💷 <span class="cost">£${Number(data.cost).toFixed(2)}</span> per person</div>` : ""}
         ${data.notes ? `<div style="white-space:pre-wrap;padding:12px;background:var(--bg-tint);border-radius:10px;font-size:13px">${escapeHtml(data.notes)}</div>` : ""}
 
@@ -984,6 +1036,12 @@
         </div>
       </div>
     `;
+
+    // Fetch & inject weather forecast (if we have a location)
+    if (data.location && data.start) {
+      const dateOnly = data.start.includes("T") ? data.start.split("T")[0] : data.start;
+      injectWeather(id, data.location, dateOnly);
+    }
 
     // Subscribe to this event's chat (only re-subscribe if switching events)
     if (messagesForEventId !== id) subscribeMessages(id);
@@ -1124,7 +1182,11 @@
       $("#evMenuField").style.display = e.target.checked ? "" : "none";
     }
   });
-  function closeEventModal() { evModal.classList.remove("open"); editingId = null; }
+  function closeEventModal() {
+    evModal.classList.remove("open");
+    editingId = null;
+    pendingWishScheduleId = null; // user cancelled — keep the idea in the wishlist
+  }
 
   $("#evCancel").addEventListener("click", closeEventModal);
   $("#evSave").addEventListener("click", async () => {
@@ -1178,6 +1240,12 @@
         payload.createdAt = serverTimestamp();
         payload.createdBy = displayName;
         await addDoc(collection(db, "houses", houseCode, "events"), payload);
+        // If this event came from a wish-list idea, remove the idea now that it's scheduled
+        if (pendingWishScheduleId) {
+          try { await deleteDoc(doc(db, "houses", houseCode, "wishlist", pendingWishScheduleId)); }
+          catch {}
+          pendingWishScheduleId = null;
+        }
         toast("Added");
       }
       closeEventModal();
@@ -1225,6 +1293,7 @@
       } else {
         if (!calendar) renderCalendar();
         subscribeEvents();
+        subscribeWishlist();
       }
     });
   }
@@ -1249,6 +1318,163 @@
       toast("Couldn't load event");
     });
   }
+
+  // ---------- Weather (Open-Meteo, no API key) ----------
+  const weatherCache = new Map(); // key: "location|date" -> {tempMax, tempMin, code} | null
+
+  function weatherEmoji(code) {
+    if (code === 0) return "☀️";
+    if (code >= 1 && code <= 3) return "⛅";
+    if (code >= 45 && code <= 48) return "🌫️";
+    if (code >= 51 && code <= 67) return "🌧️";
+    if (code >= 71 && code <= 77) return "❄️";
+    if (code >= 80 && code <= 86) return "🌦️";
+    if (code >= 95) return "⛈️";
+    return "☁️";
+  }
+  function weatherLabel(code) {
+    if (code === 0) return "Clear";
+    if (code >= 1 && code <= 3) return "Partly cloudy";
+    if (code >= 45 && code <= 48) return "Fog";
+    if (code >= 51 && code <= 67) return "Rain";
+    if (code >= 71 && code <= 77) return "Snow";
+    if (code >= 80 && code <= 86) return "Showers";
+    if (code >= 95) return "Thunder";
+    return "Cloudy";
+  }
+
+  async function fetchWeather(location, dateISO) {
+    if (!location || !dateISO) return null;
+    const key = `${location.toLowerCase()}|${dateISO}`;
+    if (weatherCache.has(key)) return weatherCache.get(key);
+
+    // Open-Meteo forecasts are only available ~16 days out
+    const today = new Date(); today.setHours(0,0,0,0);
+    const eventDate = new Date(dateISO + "T00:00");
+    const diffDays = Math.round((eventDate - today) / 86_400_000);
+    if (diffDays < 0 || diffDays > 15) { weatherCache.set(key, null); return null; }
+
+    try {
+      // 1. Geocode the location string to lat/lon
+      const gRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1`);
+      const gJson = await gRes.json();
+      const place = gJson?.results?.[0];
+      if (!place) { weatherCache.set(key, null); return null; }
+
+      // 2. Fetch daily forecast for that one date
+      const fRes = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
+        `&daily=temperature_2m_max,temperature_2m_min,weathercode&start_date=${dateISO}&end_date=${dateISO}&timezone=auto`
+      );
+      const fJson = await fRes.json();
+      const d = fJson?.daily;
+      if (!d?.weathercode?.length) { weatherCache.set(key, null); return null; }
+
+      const out = {
+        tempMax: Math.round(d.temperature_2m_max[0]),
+        tempMin: Math.round(d.temperature_2m_min[0]),
+        code:    d.weathercode[0],
+      };
+      weatherCache.set(key, out);
+      return out;
+    } catch (e) {
+      console.warn("Weather fetch failed:", e);
+      weatherCache.set(key, null);
+      return null;
+    }
+  }
+
+  function injectWeather(eventId, location, dateISO) {
+    fetchWeather(location, dateISO).then(w => {
+      const slot = document.getElementById("wx-slot-" + eventId);
+      if (!slot || !w) return;
+      slot.innerHTML = ` <span class="weather">${weatherEmoji(w.code)} ${w.tempMax}° / ${w.tempMin}° · ${weatherLabel(w.code)}</span>`;
+    });
+  }
+
+  // ---------- Wish list (brainstorm board) ----------
+  let wishUnsub = null;
+  let wishCache = [];     // [{id, title, addedBy, addedAt}]
+
+  function subscribeWishlist() {
+    if (wishUnsub) wishUnsub();
+    if (!db || !houseCode) return;
+    const ref = collection(db, "houses", houseCode, "wishlist");
+    const q = query(ref, orderBy("addedAt", "asc"));
+    wishUnsub = onSnapshot(q, (snap) => {
+      wishCache = [];
+      snap.forEach(d => wishCache.push({ id: d.id, ...d.data() }));
+      renderWishlist();
+    }, (err) => {
+      console.error(err);
+      toast("Couldn't load ideas — update your Firestore rules");
+    });
+  }
+
+  function renderWishlist() {
+    const list = document.getElementById("wishList");
+    if (!list) return;
+    if (wishCache.length === 0) {
+      list.innerHTML = `<div class="wish-empty">No ideas yet — what should you do this summer? 🌞</div>`;
+      return;
+    }
+    list.innerHTML = wishCache.map(item => `
+      <div class="wish-item">
+        <div class="wish-title">
+          ${escapeHtml(item.title)}
+          ${item.addedBy ? `<span class="wish-by"> · ${escapeHtml(item.addedBy)}</span>` : ""}
+        </div>
+        <button data-wish-act="schedule" data-id="${item.id}" title="Add to calendar">📅</button>
+        <button class="danger" data-wish-act="del" data-id="${item.id}" title="Remove">×</button>
+      </div>
+    `).join("");
+  }
+
+  async function addWishItem(title) {
+    title = (title || "").trim();
+    if (!title) return;
+    try {
+      await addDoc(collection(db, "houses", houseCode, "wishlist"), {
+        title, addedBy: displayName, addedAt: serverTimestamp(),
+      });
+    } catch (e) { console.error(e); toast("Couldn't add idea"); }
+  }
+
+  // Delegated wishlist handlers (Add + per-item actions)
+  document.addEventListener("click", async (e) => {
+    if (e.target && e.target.id === "wishAdd") {
+      const inp = document.getElementById("wishInput");
+      const text = inp.value;
+      inp.value = "";
+      inp.focus();
+      addWishItem(text);
+    }
+    const wb = e.target.closest("button[data-wish-act]");
+    if (!wb) return;
+    const id = wb.dataset.id;
+    const item = wishCache.find(w => w.id === id);
+    if (!item) return;
+    if (wb.dataset.wishAct === "del") {
+      try { await deleteDoc(doc(db, "houses", houseCode, "wishlist", id)); }
+      catch (err) { console.error(err); toast("Couldn't remove"); }
+    }
+    if (wb.dataset.wishAct === "schedule") {
+      // Pre-fill the new-event modal with the idea's title, then offer to remove from wish list on save
+      pendingWishScheduleId = id;
+      openEventModal(null);
+      $("#evTitle").value = item.title;
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target && e.target.id === "wishInput" && e.key === "Enter") {
+      e.preventDefault();
+      const inp = e.target;
+      const text = inp.value;
+      inp.value = "";
+      addWishItem(text);
+    }
+  });
+  let pendingWishScheduleId = null;
 
   let unsub = null;
   function subscribeEvents() {
