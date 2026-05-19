@@ -1,5 +1,8 @@
-# Real Firebase config — never commit
-config.js
+# NOTE: config.js is committed so GitHub Pages can serve it.
+# Firebase web API keys are designed to be public — they identify the project,
+# not authenticate it. Real security comes from Firestore rules + the house
+# code being known only to your group. If you ever change hosting and want to
+# keep config.js out of git, just add `config.js` back to this file.
 
 # OS / editor cruft
 .DS_Store
