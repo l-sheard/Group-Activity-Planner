@@ -201,6 +201,99 @@
     font-weight: 700;
   }
 
+  /* ---------- RSVP ---------- */
+  .rsvp-group { display: flex; gap: 6px; margin-top: 6px; }
+  .rsvp-btn {
+    flex: 1;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 8px;
+    border-radius: 12px;
+    border: 1.5px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+    transition: transform .1s, background .15s, border-color .15s, color .15s;
+  }
+  .rsvp-btn:hover { background: var(--bg-tint); }
+  .rsvp-btn:active { transform: translateY(1px); }
+  .rsvp-btn.active[data-rsvp="yes"]   { background: var(--p-mint-bg);  color: var(--p-mint-fg);  border-color: var(--p-mint-fg); }
+  .rsvp-btn.active[data-rsvp="maybe"] { background: var(--p-peach-bg); color: var(--p-peach-fg); border-color: var(--p-peach-fg); }
+  .rsvp-btn.active[data-rsvp="no"]    { background: var(--p-pink-bg);  color: var(--p-pink-fg);  border-color: var(--p-pink-fg); }
+  .responses {
+    background: var(--bg-tint);
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+  .responses .resp-row { padding: 3px 0; }
+  .responses .resp-row strong { font-weight: 700; }
+  .responses .resp-names { color: var(--muted); }
+  .ask-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 8px;
+  }
+
+  /* ---------- Chat ---------- */
+  .chat-list {
+    background: var(--bg-tint);
+    border-radius: 12px;
+    padding: 10px;
+    max-height: 260px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .chat-empty {
+    color: var(--muted);
+    font-size: 12px;
+    padding: 6px 4px;
+    text-align: center;
+  }
+  .msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 85%;
+    padding: 7px 10px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.35;
+    word-wrap: break-word;
+  }
+  .msg .meta { font-size: 10px; opacity: 0.7; margin-bottom: 2px; font-weight: 600; }
+  .msg.mine {
+    align-self: flex-end;
+    background: var(--p-lavender-bg);
+    color: var(--p-lavender-fg);
+    border-bottom-right-radius: 4px;
+  }
+  .msg.theirs {
+    align-self: flex-start;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-input-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .chat-input-row input {
+    flex: 1;
+    border-radius: 999px;
+    padding: 9px 14px;
+  }
+  .chat-input-row button {
+    padding: 9px 16px;
+  }
+
   /* ---------- FullCalendar overrides ---------- */
   .fc {
     --fc-border-color: var(--border);
@@ -415,7 +508,7 @@
   import { getAuth, signInAnonymously, onAuthStateChanged }
     from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
   import {
-    getFirestore, collection, onSnapshot,
+    getFirestore, collection, onSnapshot, query, orderBy,
     addDoc, doc, updateDoc, deleteDoc, serverTimestamp,
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -457,6 +550,7 @@
   const params = new URLSearchParams(location.search);
   let houseCode = (params.get("house") || localStorage.getItem("sp.houseCode") || "").trim();
   let displayName = localStorage.getItem("sp.name") || "";
+  let pendingFocusEventId = params.get("event") || null;
 
   function showSetup() {
     $("#setupName").value = displayName;
@@ -574,11 +668,89 @@
   }
 
   // ---------- Side panel ----------
+  let currentSideId = null;
+
+  // ---------- Chat (per-event message subcollection) ----------
+  let messagesUnsub = null;
+  let messagesForEventId = null;
+  let messagesCache = [];   // [{id, text, author, createdAt}], oldest first
+
+  function subscribeMessages(eventId) {
+    if (messagesUnsub) { messagesUnsub(); messagesUnsub = null; }
+    messagesForEventId = eventId;
+    messagesCache = [];
+    if (!eventId || !db || !houseCode) return;
+    const ref = collection(db, "houses", houseCode, "events", eventId, "messages");
+    const q = query(ref, orderBy("createdAt", "asc"));
+    messagesUnsub = onSnapshot(q, (snap) => {
+      messagesCache = [];
+      snap.forEach(d => messagesCache.push({ id: d.id, ...d.data() }));
+      renderMessages();
+    }, (err) => {
+      console.error(err);
+      // Most likely cause: Firestore rules don't allow the messages path
+      toast("Couldn't load chat — update your Firestore rules");
+    });
+  }
+
+  function renderMessages() {
+    const list = document.getElementById("chatList");
+    if (!list) return;
+    if (messagesCache.length === 0) {
+      list.innerHTML = `<div class="chat-empty">Be the first to say something 👋</div>`;
+      return;
+    }
+    list.innerHTML = messagesCache.map(m => {
+      const mine = m.author === displayName;
+      const when = m.createdAt?.toDate
+        ? m.createdAt.toDate().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+        : "";
+      return `<div class="msg ${mine ? "mine" : "theirs"}">
+        <span class="meta">${escapeHtml(m.author || "anon")}${when ? " · " + when : ""}</span>
+        <span>${escapeHtml(m.text || "")}</span>
+      </div>`;
+    }).join("");
+    list.scrollTop = list.scrollHeight;
+  }
+
+  async function sendChatMessage(eventId, text) {
+    text = (text || "").trim();
+    if (!text) return;
+    try {
+      await addDoc(collection(db, "houses", houseCode, "events", eventId, "messages"), {
+        text, author: displayName, createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error(err);
+      toast("Couldn't send — check Firestore rules");
+    }
+  }
   function showInSide(id) {
     const data = eventsCache.get(id);
     if (!data) return;
+    currentSideId = id;
     const cat = CATEGORIES[data.category] || CATEGORIES.other;
     const invitees = (data.invitees || []).filter(Boolean);
+    const rsvps = data.rsvps || {};
+    const myRsvp = rsvps[displayName] || null;
+
+    // Group responses
+    const bucket = { yes: [], maybe: [], no: [] };
+    for (const [name, resp] of Object.entries(rsvps)) {
+      if (bucket[resp]) bucket[resp].push(name);
+    }
+    const responded = new Set(Object.keys(rsvps));
+    const noReply = invitees.filter(n => !responded.has(n));
+
+    const respondedHtml = `
+      <div class="responses stack" style="margin-top:6px">
+        ${bucket.yes.length   ? `<div class="resp-row"><strong>✅ Going (${bucket.yes.length}):</strong> <span class="resp-names">${bucket.yes.map(escapeHtml).join(", ")}</span></div>` : ""}
+        ${bucket.maybe.length ? `<div class="resp-row"><strong>🤔 Maybe (${bucket.maybe.length}):</strong> <span class="resp-names">${bucket.maybe.map(escapeHtml).join(", ")}</span></div>` : ""}
+        ${bucket.no.length    ? `<div class="resp-row"><strong>❌ Can't (${bucket.no.length}):</strong> <span class="resp-names">${bucket.no.map(escapeHtml).join(", ")}</span></div>` : ""}
+        ${noReply.length      ? `<div class="resp-row"><strong>🕓 No reply (${noReply.length}):</strong> <span class="resp-names">${noReply.map(escapeHtml).join(", ")}</span></div>` : ""}
+        ${(!bucket.yes.length && !bucket.maybe.length && !bucket.no.length && !noReply.length) ? `<div class="resp-row muted">No responses yet — share the event link to ask everyone.</div>` : ""}
+      </div>`;
+
     $("#sideContent").innerHTML = `
       <div class="stack">
         <div><span class="pill" style="background:${cat.bg};color:${cat.fg}">${cat.label}</span></div>
@@ -586,30 +758,108 @@
         <div class="muted" style="font-weight:500">${formatWhen(data.start, data.end)}</div>
         ${data.location ? `<div>📍 ${escapeHtml(data.location)}</div>` : ""}
         ${data.cost ? `<div>💷 <span class="cost">£${Number(data.cost).toFixed(2)}</span> per person</div>` : ""}
-        ${invitees.length ? `<div><span class="muted">Coming:</span> ${invitees.map(escapeHtml).join(", ")}</div>` : ""}
         ${data.notes ? `<div style="white-space:pre-wrap;padding:12px;background:var(--bg-tint);border-radius:10px;font-size:13px">${escapeHtml(data.notes)}</div>` : ""}
-        <div class="actions">
-          <button data-act="edit" data-id="${id}">Edit</button>
+
+        <div class="ask-label">Are you coming, ${escapeHtml(displayName)}?</div>
+        <div class="rsvp-group">
+          <button class="rsvp-btn ${myRsvp==='yes'?'active':''}"   data-rsvp="yes"   data-act="rsvp" data-id="${id}">✅ Yes</button>
+          <button class="rsvp-btn ${myRsvp==='maybe'?'active':''}" data-rsvp="maybe" data-act="rsvp" data-id="${id}">🤔 Maybe</button>
+          <button class="rsvp-btn ${myRsvp==='no'?'active':''}"    data-rsvp="no"    data-act="rsvp" data-id="${id}">❌ Can't</button>
+        </div>
+
+        ${respondedHtml}
+
+        <div class="ask-label">💬 Chat</div>
+        <div class="chat-list" id="chatList">
+          <div class="chat-empty">Loading…</div>
+        </div>
+        <div class="chat-input-row">
+          <input id="chatInput" placeholder="Message your flatmates…" autocomplete="off" />
+          <button class="primary" data-act="chat-send" data-id="${id}">Send</button>
+        </div>
+
+        <div class="actions" style="flex-wrap:wrap">
+          <button data-act="share" data-id="${id}">🔗 Copy event link</button>
+          <button data-act="edit"  data-id="${id}">Edit</button>
           <button class="danger" data-act="del" data-id="${id}">Delete</button>
         </div>
       </div>
     `;
+
+    // Subscribe to this event's chat (only re-subscribe if switching events)
+    if (messagesForEventId !== id) subscribeMessages(id);
+    else renderMessages();
+
+    // Enter-to-send
+    const inp = document.getElementById("chatInput");
+    if (inp) {
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          const text = inp.value;
+          inp.value = "";
+          sendChatMessage(id, text);
+        }
+      });
+    }
   }
 
   function clearSide() {
+    currentSideId = null;
+    if (messagesUnsub) { messagesUnsub(); messagesUnsub = null; }
+    messagesForEventId = null;
+    messagesCache = [];
     $("#sideContent").innerHTML = `<div class="empty">Tap an event for details, or drag any event to a new day to reschedule.</div>`;
   }
 
-  // Delegated handler for side-panel buttons (Edit / Delete)
+  // Delegated handler for side-panel buttons
   $("#sideContent").addEventListener("click", async (e) => {
     const b = e.target.closest("button[data-act]");
     if (!b) return;
     const id = b.dataset.id;
-    if (b.dataset.act === "edit") openEventModal(id);
-    if (b.dataset.act === "del") {
+    const act = b.dataset.act;
+
+    if (act === "edit") openEventModal(id);
+
+    if (act === "del") {
       if (!confirm("Delete this event?")) return;
       try { await deleteDoc(doc(db, "houses", houseCode, "events", id)); toast("Deleted"); clearSide(); }
       catch (err) { console.error(err); toast("Couldn't delete"); }
+    }
+
+    if (act === "rsvp") {
+      if (!displayName) { toast("Set a name first"); return; }
+      const choice = b.dataset.rsvp;       // yes | maybe | no
+      const cur = eventsCache.get(id);
+      const rsvps = { ...(cur?.rsvps || {}) };
+      // Toggle off if clicking the same one again
+      if (rsvps[displayName] === choice) delete rsvps[displayName];
+      else rsvps[displayName] = choice;
+      try {
+        await updateDoc(doc(db, "houses", houseCode, "events", id), {
+          rsvps,
+          updatedAt: serverTimestamp(),
+          updatedBy: displayName,
+        });
+        // The snapshot listener will re-render — but update immediately for snappy feel
+        eventsCache.set(id, { ...cur, rsvps });
+        showInSide(id);
+      } catch (err) { console.error(err); toast("Couldn't save RSVP"); }
+    }
+
+    if (act === "share") {
+      const url = `${location.origin}${location.pathname}?house=${encodeURIComponent(houseCode)}&event=${encodeURIComponent(id)}`;
+      try { await navigator.clipboard.writeText(url); toast("Event link copied"); }
+      catch { prompt("Copy this event link:", url); }
+    }
+
+    if (act === "chat-send") {
+      const inp = document.getElementById("chatInput");
+      if (!inp) return;
+      const text = inp.value;
+      inp.value = "";
+      inp.focus();
+      sendChatMessage(id, text);
     }
   });
 
@@ -724,6 +974,26 @@
       eventsCache.clear();
       snap.forEach(d => eventsCache.set(d.id, d.data()));
       refreshCalendarEvents();
+
+      // If we arrived via a shared event link, auto-open it once data is here
+      if (pendingFocusEventId && eventsCache.has(pendingFocusEventId)) {
+        const ev = eventsCache.get(pendingFocusEventId);
+        // Navigate the calendar to that event's month so it's visible
+        if (calendar && ev?.start) {
+          const datePart = ev.start.includes("T") ? ev.start.split("T")[0] : ev.start;
+          calendar.gotoDate(datePart);
+        }
+        showInSide(pendingFocusEventId);
+        pendingFocusEventId = null;
+      } else if (currentSideId && eventsCache.has(currentSideId)) {
+        // Live-refresh the side panel so RSVPs update in real time,
+        // but preserve any chat draft the user was typing
+        const draftEl = document.getElementById("chatInput");
+        const draft = draftEl ? draftEl.value : "";
+        showInSide(currentSideId);
+        const newInp = document.getElementById("chatInput");
+        if (newInp && draft) { newInp.value = draft; newInp.focus(); }
+      }
     }, (err) => {
       console.error(err);
       toast("Couldn't load events — check Firestore rules");

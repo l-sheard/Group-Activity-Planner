@@ -45,12 +45,15 @@ service cloud.firestore {
   match /databases/{database}/documents {
     match /houses/{houseId}/events/{eventId} {
       allow read, write: if request.auth != null;
+      match /messages/{messageId} {
+        allow read, write: if request.auth != null;
+      }
     }
   }
 }
 ```
 
-Click **Publish**. This lets any signed-in user (anonymous auth counts) read and write events. Because the house code acts as a shared password, only people you give the code to can find your data.
+Click **Publish**. This lets any signed-in user (anonymous auth counts) read and write events and per-event chat messages. Because the house code acts as a shared password, only people you give the code to can find your data.
 
 > Want stricter rules later? You can add a `members` doc per house and check membership. For now, keep the house code something only your group knows.
 
