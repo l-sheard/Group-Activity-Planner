@@ -87,6 +87,41 @@ Anyone who opens it will pre-fill the house code and just needs to type their na
 - **Categories** — colour-coded: Social, Day trip, Food, Night out, Chill, Other.
 - **Costs** — set a per-person cost on each event; the side panel shows a running total for the month.
 
+## Calendar sync
+
+In the right sidebar, the **📅 Calendar sync** card has up to three buttons:
+
+- **📤 Export group** downloads a `.ics` file of the shared house calendar. Import it into Apple Calendar, Google Calendar (Settings → Import & Export), Outlook, etc. Re-export to refresh — it's a snapshot.
+- **📡 Live subscribe** (appears only after you set up the Cloudflare Worker — see below) copies a `webcal://` URL that calendar apps will subscribe to. New events from the app auto-appear in your phone calendar within a few hours.
+- **📥 Import mine** uploads your own `.ics` (export from your personal calendar app first) so private events show as dashed-purple "🔒" blocks on top of the shared calendar. **These never leave your device** — they're stored only in your browser's localStorage and never sync to Firestore, so your flatmates can't see them.
+
+### Live calendar subscription (optional, ~10 minutes)
+
+The `.ics` download is a one-shot snapshot. For a live feed that auto-refreshes on everyone's phone, deploy the included `cloudflare-worker.js`. Cloudflare's free tier covers up to 100k requests/day — way more than you'll need.
+
+1. **Fill in your Firebase values in `cloudflare-worker.js`.** Open the file in this repo, find the two placeholders at the top, and replace them with the same values from `config.js`:
+   ```js
+   const FIREBASE_API_KEY = "AIzaSy...";        // same as config.js apiKey
+   const FIREBASE_PROJECT = "summer-planner-xxxx"; // same as config.js projectId
+   ```
+2. **Create a free Cloudflare account.** Go to https://dash.cloudflare.com → sign up. No credit card needed for the Workers free tier.
+3. **Create a Worker.** In the Cloudflare dashboard, go to **Workers & Pages → Create → Create Worker**. Pick any name (e.g. `summer-planner-feed`) — that becomes your worker URL.
+4. **Paste in the code.** Click **Edit code**, delete the default template, paste the contents of `cloudflare-worker.js` (with your filled-in Firebase values), then click **Deploy**.
+5. **Copy the worker URL.** Cloudflare gives you a URL like `https://summer-planner-feed.YOUR-NAME.workers.dev`. Copy it.
+6. **Paste it into `config.js`.** Open `config.js`, find `window.WORKER_URL = "";`, and put the worker URL inside the quotes:
+   ```js
+   window.WORKER_URL = "https://summer-planner-feed.YOUR-NAME.workers.dev";
+   ```
+7. **Push to GitHub.** Once GitHub Pages redeploys, a new **📡 Live subscribe** button appears in the sync card. Click it to copy a `webcal://` URL, then paste that into your calendar app:
+   - **iOS Calendar**: Settings → Calendar → Accounts → Add Account → Other → Add Subscribed Calendar.
+   - **Google Calendar**: Other calendars → + → From URL.
+   - **macOS Calendar**: File → New Calendar Subscription.
+   - **Outlook**: Add calendar → Subscribe from web.
+
+Refresh interval is set by the calendar app (usually every few hours on phones, hourly on desktops). The worker itself caches for 15 minutes at the edge to keep Firestore reads low.
+
+⚠️ The worker uses **anonymous Firebase sign-in** under the hood, which creates a fresh anonymous user account every time a calendar refresh hits the worker. These pile up in Firebase Auth's Users list over time — harmless, but every few months you can bulk-delete the anonymous ones in the Firebase console if you care about housekeeping.
+
 ## Inviting non-flatmates (guest mode)
 
 Each event has two share buttons: **🔗 Copy event link** (for flatmates — opens the app focused on that event) and **👋 Copy guest invite** (for outsiders — opens a single-event view with no access to the rest of the calendar). Guests can RSVP, bring +1s, and chat on that event only; they can't see other events or use the calendar.

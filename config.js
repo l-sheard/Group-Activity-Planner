@@ -9,3 +9,7 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "933534731062",
   appId: "1:933534731062:web:95073d86c5791a35054197",
 };
+
+// Optional: live-subscription Cloudflare Worker URL (see README).
+// Leave empty until you've deployed cloudflare-worker.js.
+window.WORKER_URL = "https://summer-planner-feed.lara-sheard9.workers.dev/";

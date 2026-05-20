@@ -279,6 +279,21 @@
   }
   .wish-empty { color: var(--muted); font-size: 13px; padding: 6px 4px; text-align: center; }
 
+  /* ---------- Calendar sync ---------- */
+  .sync-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sync-actions .btn, .sync-actions button {
+    font-size: 13px;
+    padding: 7px 14px;
+  }
+  /* Personal-only events (imported from user's own calendar) */
+  .fc-event.personal {
+    background: #ede9fe !important;
+    color: #5b21b6 !important;
+    border: 1px dashed #c4b5fd !important;
+    font-style: italic;
+  }
+  .fc-event.personal .fc-event-title::before { content: "🔒 "; font-style: normal; }
+
   /* ---------- Weather pill ---------- */
   .weather {
     display: inline-block;
@@ -500,7 +515,9 @@
   body.guest-mode .side > h2.this-month,
   body.guest-mode .side > h2.this-month + .side-card,
   body.guest-mode .side > h2.ideas-heading,
-  body.guest-mode .side > .ideas-card { display: none; }
+  body.guest-mode .side > .ideas-card,
+  body.guest-mode .side > h2.sync-heading,
+  body.guest-mode .side > .sync-card { display: none; }
   body.guest-mode #newEventBtn,
   body.guest-mode #inviteBtn,
   body.guest-mode #houseCode,
@@ -553,6 +570,22 @@
 
       <h2 class="this-month" style="margin-top: 24px">🌻 This month</h2>
       <div class="side-card"><div id="summary" class="muted" style="font-size:13px">—</div></div>
+
+      <h2 class="sync-heading" style="margin-top: 24px">📅 Calendar sync</h2>
+      <div class="side-card sync-card">
+        <div class="muted" style="font-size:12px;margin-bottom:10px">
+          Sync the group calendar to your phone, or import your personal calendar so private events show up on top (just for you).
+        </div>
+        <div class="sync-actions">
+          <button id="exportIcsBtn">📤 Export group</button>
+          <button id="subscribeBtn" style="display:none">📡 Live subscribe</button>
+          <label class="btn" id="importIcsLabel" style="display:inline-flex;align-items:center;gap:6px">
+            📥 Import mine
+            <input id="importIcsInput" type="file" accept=".ics,text/calendar" style="display:none" />
+          </label>
+        </div>
+        <div id="personalStatus" class="muted" style="font-size:12px;margin-top:8px"></div>
+      </div>
     </aside>
   </main>
 </div>
@@ -781,7 +814,14 @@
       displayEventTime: true,
       events: [],
       dateClick: (info) => openEventModal(null, info.dateStr),
-      eventClick: (info) => showInSide(info.event.id),
+      eventClick: (info) => {
+        // Personal/imported events have no Firestore doc, so just show their title
+        if (info.event.id && info.event.id.startsWith("personal-")) {
+          toast("🔒 " + (info.event.title || "Personal event"));
+          return;
+        }
+        showInSide(info.event.id);
+      },
       eventDrop: async (info) => {
         try {
           const patch = {
@@ -833,6 +873,23 @@
           : data.end;
       }
       fcEvents.push(ev);
+    }
+    // Overlay personal events (only on this device — never in Firestore)
+    for (let i = 0; i < personalEvents.length; i++) {
+      const p = personalEvents[i];
+      const allDay = isAllDayStart(p.start);
+      const pe = {
+        id: "personal-" + i,
+        title: p.title,
+        start: p.start,
+        allDay,
+        classNames: ["personal"],
+        editable: false,                // can't drag your personal events around
+      };
+      if (p.end) {
+        pe.end = (allDay && isAllDayStart(p.end)) ? addDaysISO(p.end, 1) : p.end;
+      }
+      fcEvents.push(pe);
     }
     calendar.removeAllEvents();
     calendar.addEventSource(fcEvents);
@@ -1305,6 +1362,7 @@
         subscribeSingleEvent(pendingFocusEventId);
       } else {
         if (!calendar) renderCalendar();
+        loadPersonalEvents();
         subscribeEvents();
         subscribeWishlist();
       }
@@ -1332,6 +1390,164 @@
     });
   }
 
+  // ---------- Calendar sync (iCalendar / .ics) ----------
+
+  // ---- Export: build ICS text from the shared events and offer as download ----
+  function buildIcs(eventsMap, houseCodeStr) {
+    const lines = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//Summer Planner//EN",
+      "CALSCALE:GREGORIAN",
+      `X-WR-CALNAME:Summer Planner (${houseCodeStr})`,
+    ];
+    const stamp = icsNowUtc();
+    for (const [id, data] of eventsMap) {
+      if (!data.start) continue;
+      const allDay = isAllDayStart(data.start);
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:${id}@summerplanner-${houseCodeStr}`);
+      lines.push(`DTSTAMP:${stamp}`);
+      lines.push(`SUMMARY:${icsEscape(data.title || "Untitled")}`);
+      if (data.location) lines.push(`LOCATION:${icsEscape(data.location)}`);
+      const desc = [data.notes, data.menu ? "Menu: " + data.menu : ""].filter(Boolean).join("\n\n");
+      if (desc) lines.push(`DESCRIPTION:${icsEscape(desc)}`);
+
+      if (allDay) {
+        lines.push(`DTSTART;VALUE=DATE:${data.start.replace(/-/g, "")}`);
+        // ICS all-day DTEND is exclusive — we store inclusive, so +1 day
+        const endInclusive = data.end && isAllDayStart(data.end) ? data.end : data.start;
+        const endExclusive = addDaysISO(endInclusive, 1);
+        lines.push(`DTEND;VALUE=DATE:${endExclusive.replace(/-/g, "")}`);
+      } else {
+        lines.push(`DTSTART:${icsLocalDateTime(data.start)}`);
+        if (data.end) lines.push(`DTEND:${icsLocalDateTime(data.end)}`);
+      }
+      lines.push("END:VEVENT");
+    }
+    lines.push("END:VCALENDAR");
+    return lines.join("\r\n");
+  }
+
+  function icsEscape(s) {
+    return String(s).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  }
+  function icsLocalDateTime(iso) {
+    // "YYYY-MM-DDTHH:MM" → "YYYYMMDDTHHMMSS" (floating local time)
+    const [d, t] = iso.split("T");
+    return `${d.replace(/-/g, "")}T${(t || "00:00").replace(":", "")}00`;
+  }
+  function icsNowUtc() {
+    const d = new Date();
+    return `${d.getUTCFullYear()}${pad2(d.getUTCMonth()+1)}${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`;
+  }
+
+  function downloadIcs() {
+    if (!eventsCache.size) { toast("No events to export yet"); return; }
+    const ics = buildIcs(eventsCache, houseCode);
+    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `summer-planner-${houseCode}.ics`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast("Downloaded — import it into Apple/Google/Outlook Calendar");
+  }
+
+  // ---- Import: parse user's .ics and store personal events in localStorage ----
+  function parseIcs(text) {
+    // RFC 5545 line unfolding (lines continued by leading space/tab)
+    text = text.replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, "");
+    const lines = text.split(/\r?\n/);
+    const events = [];
+    let cur = null;
+    for (const line of lines) {
+      if (line === "BEGIN:VEVENT") cur = {};
+      else if (line === "END:VEVENT") { if (cur) events.push(cur); cur = null; }
+      else if (cur) {
+        const i = line.indexOf(":");
+        if (i < 0) continue;
+        const k = line.slice(0, i), v = line.slice(i + 1);
+        const baseKey = k.split(";")[0];
+        const isDateOnly = /VALUE=DATE(?!-TIME)/i.test(k);
+        if (baseKey === "SUMMARY")      cur.title    = icsUnescape(v);
+        else if (baseKey === "LOCATION")cur.location = icsUnescape(v);
+        else if (baseKey === "DESCRIPTION") cur.notes = icsUnescape(v);
+        else if (baseKey === "DTSTART") cur.start    = parseIcsDate(v, isDateOnly);
+        else if (baseKey === "DTEND")   cur.end      = parseIcsDate(v, isDateOnly);
+        else if (baseKey === "UID")     cur.uid      = v;
+      }
+    }
+    return events;
+  }
+  function icsUnescape(s) {
+    return String(s).replace(/\\n/g, "\n").replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\");
+  }
+  function parseIcsDate(val, isDateOnly) {
+    if (isDateOnly || /^\d{8}$/.test(val)) {
+      return `${val.slice(0,4)}-${val.slice(4,6)}-${val.slice(6,8)}`;
+    }
+    // YYYYMMDDTHHMMSS[Z]
+    const utc = val.endsWith("Z");
+    const clean = val.replace("Z", "");
+    if (!/^\d{8}T\d{4,6}$/.test(clean)) return null;
+    const yyyy = clean.slice(0,4), MM = clean.slice(4,6), dd = clean.slice(6,8);
+    const HH = clean.slice(9,11), mm = clean.slice(11,13);
+    if (utc) {
+      const d = new Date(`${yyyy}-${MM}-${dd}T${HH}:${mm}:00Z`);
+      return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    }
+    return `${yyyy}-${MM}-${dd}T${HH}:${mm}`;
+  }
+
+  // Personal events live ONLY in this browser's localStorage. They never go to Firestore.
+  const PERSONAL_KEY = "sp.personalEvents";
+  let personalEvents = [];
+  function loadPersonalEvents() {
+    try { personalEvents = JSON.parse(localStorage.getItem(PERSONAL_KEY) || "[]"); }
+    catch { personalEvents = []; }
+    refreshPersonalStatus();
+  }
+  function savePersonalEvents() {
+    localStorage.setItem(PERSONAL_KEY, JSON.stringify(personalEvents));
+    refreshPersonalStatus();
+  }
+  function refreshPersonalStatus() {
+    const el = document.getElementById("personalStatus");
+    if (!el) return;
+    el.innerHTML = personalEvents.length
+      ? `🔒 ${personalEvents.length} personal event${personalEvents.length===1?"":"s"} loaded (only visible to you) · <a href="#" id="clearPersonal" style="color:var(--p-pink-fg)">Clear</a>`
+      : "";
+  }
+  function clearPersonalEvents() {
+    personalEvents = [];
+    savePersonalEvents();
+    refreshCalendarEvents();
+    toast("Personal events cleared");
+  }
+
+  async function importPersonalIcs(file) {
+    try {
+      const text = await file.text();
+      const parsed = parseIcs(text)
+        .filter(e => e.start && e.title)
+        // Trim to a sensible window so localStorage stays small
+        .filter(e => {
+          const datePart = e.start.includes("T") ? e.start.split("T")[0] : e.start;
+          const d = new Date(datePart + "T00:00");
+          const today = new Date(); today.setHours(0,0,0,0);
+          const diffDays = Math.round((d - today) / 86_400_000);
+          return diffDays >= -30 && diffDays <= 180;
+        });
+      personalEvents = parsed;
+      savePersonalEvents();
+      refreshCalendarEvents();
+      toast(`Imported ${parsed.length} personal event${parsed.length===1?"":"s"}`);
+    } catch (e) {
+      console.error(e); toast("Couldn't parse that .ics file");
+    }
+  }
+
   // ---------- Weather (Open-Meteo, no API key) ----------
   const weatherCache = new Map(); // key: "location|date" -> {tempMax, tempMin, code} | null
 
@@ -1356,37 +1572,66 @@
     return "Cloudy";
   }
 
+  async function geocodeLocation(location) {
+    // Cache geocodes so we only hit the API once per place name
+    if (geocodeLocation._cache?.has(location.toLowerCase())) return geocodeLocation._cache.get(location.toLowerCase());
+    if (!geocodeLocation._cache) geocodeLocation._cache = new Map();
+    try {
+      const gRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1`);
+      const gJson = await gRes.json();
+      const place = gJson?.results?.[0] || null;
+      geocodeLocation._cache.set(location.toLowerCase(), place);
+      return place;
+    } catch { geocodeLocation._cache.set(location.toLowerCase(), null); return null; }
+  }
+
   async function fetchWeather(location, dateISO) {
     if (!location || !dateISO) return null;
     const key = `${location.toLowerCase()}|${dateISO}`;
     if (weatherCache.has(key)) return weatherCache.get(key);
 
-    // Open-Meteo forecasts are only available ~16 days out
     const today = new Date(); today.setHours(0,0,0,0);
     const eventDate = new Date(dateISO + "T00:00");
     const diffDays = Math.round((eventDate - today) / 86_400_000);
-    if (diffDays < 0 || diffDays > 15) { weatherCache.set(key, null); return null; }
+    if (diffDays < 0) { weatherCache.set(key, null); return null; }
+
+    const place = await geocodeLocation(location);
+    if (!place) { weatherCache.set(key, null); return null; }
 
     try {
-      // 1. Geocode the location string to lat/lon
-      const gRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1`);
-      const gJson = await gRes.json();
-      const place = gJson?.results?.[0];
-      if (!place) { weatherCache.set(key, null); return null; }
+      if (diffDays <= 15) {
+        // Real forecast within 16-day window
+        const fRes = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
+          `&daily=temperature_2m_max,temperature_2m_min,weathercode&start_date=${dateISO}&end_date=${dateISO}&timezone=auto`
+        );
+        const fJson = await fRes.json();
+        const d = fJson?.daily;
+        if (!d?.weathercode?.length) { weatherCache.set(key, null); return null; }
+        const out = {
+          tempMax: Math.round(d.temperature_2m_max[0]),
+          tempMin: Math.round(d.temperature_2m_min[0]),
+          code:    d.weathercode[0],
+          kind:    "forecast",
+        };
+        weatherCache.set(key, out);
+        return out;
+      }
 
-      // 2. Fetch daily forecast for that one date
-      const fRes = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
-        `&daily=temperature_2m_max,temperature_2m_min,weathercode&start_date=${dateISO}&end_date=${dateISO}&timezone=auto`
+      // Beyond 16 days: fetch ERA5 long-term average for that calendar week using last year as a rough proxy
+      const lastYearStart = `${eventDate.getFullYear() - 1}-${pad2(eventDate.getMonth()+1)}-${pad2(eventDate.getDate())}`;
+      const aRes = await fetch(
+        `https://archive-api.open-meteo.com/v1/archive?latitude=${place.latitude}&longitude=${place.longitude}` +
+        `&start_date=${lastYearStart}&end_date=${lastYearStart}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto`
       );
-      const fJson = await fRes.json();
-      const d = fJson?.daily;
+      const aJson = await aRes.json();
+      const d = aJson?.daily;
       if (!d?.weathercode?.length) { weatherCache.set(key, null); return null; }
-
       const out = {
         tempMax: Math.round(d.temperature_2m_max[0]),
         tempMin: Math.round(d.temperature_2m_min[0]),
         code:    d.weathercode[0],
+        kind:    "average",
       };
       weatherCache.set(key, out);
       return out;
@@ -1401,7 +1646,9 @@
     fetchWeather(location, dateISO).then(w => {
       const slot = document.getElementById("wx-slot-" + eventId);
       if (!slot || !w) return;
-      slot.innerHTML = ` <span class="weather">${weatherEmoji(w.code)} ${w.tempMax}° / ${w.tempMin}° · ${weatherLabel(w.code)}</span>`;
+      const prefix = w.kind === "average" ? "Avg " : "";
+      const title  = w.kind === "average" ? ' title="Long-range forecast not yet available — showing last year as a rough guide"' : "";
+      slot.innerHTML = ` <span class="weather"${title}>${weatherEmoji(w.code)} ${prefix}${w.tempMax}° / ${w.tempMin}° · ${weatherLabel(w.code)}</span>`;
     });
   }
 
@@ -1488,6 +1735,45 @@
     }
   });
   let pendingWishScheduleId = null;
+
+  // Calendar sync buttons
+  document.addEventListener("click", async (e) => {
+    if (e.target && e.target.id === "exportIcsBtn") {
+      e.preventDefault();
+      downloadIcs();
+    }
+    if (e.target && e.target.id === "clearPersonal") {
+      e.preventDefault();
+      if (confirm("Remove your imported personal events from this device?")) clearPersonalEvents();
+    }
+    if (e.target && e.target.id === "subscribeBtn") {
+      e.preventDefault();
+      const base = (window.WORKER_URL || "").trim().replace(/\/$/, "");
+      if (!base) { toast("Worker URL not set — see README"); return; }
+      // Build a webcal:// URL that calendar apps recognise as a subscription
+      const httpUrl = `${base}/feed?house=${encodeURIComponent(houseCode)}`;
+      const webcalUrl = httpUrl.replace(/^https?:/, "webcal:");
+      try {
+        await navigator.clipboard.writeText(webcalUrl);
+        toast("Subscribe link copied — paste into your calendar app");
+      } catch {
+        prompt("Copy this subscribe link and paste into your calendar app:", webcalUrl);
+      }
+    }
+  });
+
+  // Show the subscribe button if a Worker URL is configured
+  if (typeof window !== "undefined" && (window.WORKER_URL || "").trim()) {
+    const btn = document.getElementById("subscribeBtn");
+    if (btn) btn.style.display = "";
+  }
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.id === "importIcsInput") {
+      const f = e.target.files?.[0];
+      if (f) importPersonalIcs(f);
+      e.target.value = ""; // allow re-uploading the same file later
+    }
+  });
 
   let unsub = null;
   function subscribeEvents() {

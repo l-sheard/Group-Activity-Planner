@@ -8,3 +8,7 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "PASTE_SENDER_ID",
   appId: "PASTE_APP_ID",
 };
+
+// Optional: live-subscription Cloudflare Worker URL (see README).
+// Leave empty until you've deployed cloudflare-worker.js.
+window.WORKER_URL = "";
