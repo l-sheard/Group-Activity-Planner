@@ -1097,8 +1097,7 @@
 
         <div class="actions" style="flex-wrap:wrap">
           ${isGuestMode ? "" : `
-            <button data-act="share"       data-id="${id}">🔗 Copy event link</button>
-            <button data-act="share-guest" data-id="${id}">👋 Copy guest invite</button>
+            <button data-act="share-guest" data-id="${id}">🔗 Copy invite link</button>
             <button data-act="edit"        data-id="${id}">Edit</button>
             <button class="danger" data-act="del" data-id="${id}">Delete</button>
           `}
@@ -1194,12 +1193,6 @@
         eventsCache.set(id, { ...cur, plusOnes });
         showInSide(id);
       } catch (err) { console.error(err); toast("Couldn't update guests"); }
-    }
-
-    if (act === "share") {
-      const url = `${location.origin}${location.pathname}?house=${encodeURIComponent(houseCode)}&event=${encodeURIComponent(id)}`;
-      try { await navigator.clipboard.writeText(url); toast("Event link copied"); }
-      catch { prompt("Copy this event link:", url); }
     }
 
     if (act === "share-guest") {
