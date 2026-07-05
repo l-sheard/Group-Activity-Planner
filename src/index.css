@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply font-sans text-text bg-bg antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ---------- FullCalendar overrides ---------- */
+/* FullCalendar renders its own class names internally, so these can't be
+   reached with Tailwind utility classes — kept as plain CSS, sourced from
+   the same design tokens via Tailwind's theme() function. */
+.fc {
+  --fc-border-color: theme("colors.border");
+  --fc-page-bg-color: theme("colors.surface");
+  --fc-neutral-bg-color: theme("colors.bg-tint");
+  --fc-today-bg-color: #fff7d6;
+  font-family: theme("fontFamily.sans");
+}
+.fc .fc-toolbar-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.fc .fc-button {
+  background: theme("colors.bg-tint") !important;
+  color: theme("colors.text") !important;
+  border: 1px solid theme("colors.border") !important;
+  font-weight: 600 !important;
+  text-transform: none !important;
+  border-radius: 999px !important;
+  padding: 6px 14px !important;
+  box-shadow: none !important;
+}
+.fc .fc-button:hover {
+  background: theme("colors.accent-soft") !important;
+}
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  background: theme("colors.accent") !important;
+  color: #fff !important;
+  border-color: theme("colors.accent") !important;
+}
+.fc-col-header-cell {
+  background: theme("colors.bg-tint");
+}
+.fc-col-header-cell-cushion {
+  color: theme("colors.muted");
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 8px 4px !important;
+}
+.fc-daygrid-day-number {
+  color: theme("colors.text");
+  padding: 8px 10px;
+  font-weight: 600;
+}
+.fc-day-today .fc-daygrid-day-number {
+  background: theme("colors.accent");
+  color: #fff;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 4px;
+  padding: 0;
+  font-size: 13px;
+}
+.fc-event {
+  border: none !important;
+  padding: 4px 8px !important;
+  border-radius: 10px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer;
+  margin: 2px 4px !important;
+  box-shadow: 0 1px 2px rgba(58, 47, 42, 0.04);
+}
+.fc-event:hover {
+  transform: translateY(-1px);
+  transition: transform 0.1s;
+}
+.fc-daygrid-event-dot {
+  display: none !important;
+}
+.fc-event-time {
+  font-weight: 700 !important;
+  opacity: 0.85;
+}
+
+/* Personal-only events (imported from the user's own calendar) */
+.fc-event.personal {
+  background: #ede9fe !important;
+  color: #5b21b6 !important;
+  border: 1px dashed #c4b5fd !important;
+  font-style: italic;
+}
+.fc-event.personal .fc-event-title::before {
+  content: "🔒 ";
+  font-style: normal;
+}
+
+/* Unread-chat dot on calendar events */
+.fc-event.has-unread {
+  position: relative;
+}
+.fc-event.has-unread::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  background: #ef4444;
+  border-radius: 50%;
+  border: 2px solid theme("colors.surface");
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}

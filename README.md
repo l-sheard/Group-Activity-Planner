@@ -2,7 +2,7 @@
 
 A shared web app for you and your flatmates to plan out activities for the month — month-view calendar with drag-and-drop, per-event categories, cost, location, who's coming, and notes. Everyone with the same "house code" sees the same calendar in real time.
 
-It's one HTML file. The only setup is creating a free Firebase project so the data is shared between you and your flatmates.
+Built with React, Tailwind CSS, and Vite. The only setup is creating a free Firebase project so the data is shared between you and your flatmates.
 
 ---
 
@@ -15,25 +15,23 @@ It's one HTML file. The only setup is creating a free Firebase project so the da
 3. Once the project is created, in the left sidebar go to **Build → Authentication → Get started**, then under **Sign-in method** enable **Anonymous**.
 4. In the left sidebar go to **Build → Firestore Database → Create database**. Pick the region closest to you. Start in **production mode** (we'll set the rules in step 3).
 
-### 2. Get your config and put it in `config.js`
+### 2. Get your config and put it in `.env.local`
 
 1. In the Firebase console, click the gear icon → **Project settings**.
 2. Scroll to **Your apps** and click the `</>` (Web) icon to register a new web app. Give it any nickname. You don't need Firebase Hosting yet.
 3. Firebase shows you a `firebaseConfig` block. Copy the values.
-4. In this project folder, copy `config.example.js` to a new file called `config.js`, then replace each placeholder with the matching value from Firebase. It should look like:
+4. In this project folder, copy `.env.example` to a new file called `.env.local`, then replace each placeholder with the matching value from Firebase. It should look like:
 
-```js
-window.FIREBASE_CONFIG = {
-  apiKey: "AIzaSy...",
-  authDomain: "summer-planner-xxxx.firebaseapp.com",
-  projectId: "summer-planner-xxxx",
-  storageBucket: "summer-planner-xxxx.appspot.com",
-  messagingSenderId: "1234567890",
-  appId: "1:1234567890:web:abcdef...",
-};
+```
+VITE_FIREBASE_API_KEY=AIzaSy...
+VITE_FIREBASE_AUTH_DOMAIN=summer-planner-xxxx.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=summer-planner-xxxx
+VITE_FIREBASE_STORAGE_BUCKET=summer-planner-xxxx.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=1234567890
+VITE_FIREBASE_APP_ID=1:1234567890:web:abcdef...
 ```
 
-> `config.js` is listed in `.gitignore` so it never gets pushed to a public repo. Firebase web API keys aren't strictly secret — they identify your project, not authenticate it — but keeping them out of source control is good hygiene and makes rotating them easier later.
+> `.env.local` is listed in `.gitignore` so it never gets pushed to a public repo. Firebase web API keys aren't strictly secret — they identify your project, not authenticate it — but keeping them out of source control is good hygiene and makes rotating them easier later. If you deploy via the included GitHub Actions workflow (see step 4), add the same values as **repository secrets** instead (Settings → Secrets and variables → Actions) so the build step can read them.
 
 ### 3. Set Firestore rules
 
@@ -60,9 +58,32 @@ Click **Publish**. This lets any signed-in user (anonymous auth counts) read and
 
 > Want stricter rules later? You can add a `members` doc per house and check membership. For now, keep the house code something only your group knows.
 
-### 4. Open the app
+### 4. Run it locally, or build and deploy
 
-Just double-click `index.html`, or host it anywhere static — GitHub Pages, Netlify Drop (drag-and-drop the file), Vercel, Cloudflare Pages. Firebase Hosting works too if you want to keep everything in one place.
+This is now a Vite + React app, so it needs a build step (no more double-clicking `index.html`).
+
+**Local development:**
+
+```
+npm install
+npm run dev
+```
+
+Open the URL Vite prints (usually `http://localhost:5173`).
+
+**Build for production:**
+
+```
+npm run build
+```
+
+This outputs a static site into `dist/` — host that folder anywhere static: GitHub Pages, Netlify, Vercel, Cloudflare Pages, or Firebase Hosting.
+
+**Deploying to GitHub Pages automatically:** this repo includes `.github/workflows/deploy.yml`, which builds and deploys `dist/` to GitHub Pages on every push to `main`. To use it:
+
+1. In your GitHub repo, go to **Settings → Pages** and set the source to **GitHub Actions**.
+2. Go to **Settings → Secrets and variables → Actions** and add each `VITE_FIREBASE_*` / `VITE_WORKER_URL` value from your `.env.local` as a repository secret (same names).
+3. Push to `main` — the workflow builds and deploys automatically. Check the **Actions** tab for progress.
 
 The first time you open it, you'll be asked for your name and a **house code**. Pick something memorable like `flat-42` or `croft-road-summer`. Give the same code to your flatmates — that's how you all see the same calendar.
 
@@ -134,4 +155,14 @@ Anyone who knows your house code can read and write to your events (assuming the
 
 ## Tech
 
-Single HTML file, no build step. Uses Firebase (Firestore for storage, anonymous auth) and FullCalendar 6 (month view + drag-and-drop). All loaded from CDNs.
+React + Tailwind CSS, built with Vite. Uses Firebase (Firestore for storage, anonymous auth) and FullCalendar 6 via `@fullcalendar/react` (month view + drag-and-drop).
+
+```
+src/
+  App.jsx              — top-level state & orchestration
+  firebase.js           — Firebase init from .env.local
+  components/           — Topbar, CalendarView, SidePanel, EventModal, etc.
+  hooks/                — Firestore subscriptions (events, wishlist, chat, auth)
+  lib/                  — categories, date/ICS/weather utilities, Firestore actions
+  context/ToastContext.jsx
+```
